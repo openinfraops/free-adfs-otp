@@ -1,0 +1,43 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+          cache: true
+          cache-dependency-path: |
+            NuGet.Config
+            **/*.csproj
+
+      - name: Restore solution
+        run: dotnet restore .\freeADFSOtp.sln --configfile .\NuGet.Config
+
+      - name: Build solution
+        run: dotnet build .\freeADFSOtp.sln -c Release --no-restore
+
+      - name: Generate release ZIP packages
+        shell: pwsh
+        run: .\deploy\package-artifacts.ps1 -Configuration Release -DotnetPath dotnet -PackagePrefix "freeADFSOtp-${{ github.ref_name }}" -CreateBundle
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            artifacts/packages/zip/*.zip

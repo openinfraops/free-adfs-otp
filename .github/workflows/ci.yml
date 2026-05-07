@@ -56,11 +56,16 @@ jobs:
           path: '**/*.trx'
           if-no-files-found: ignore
 
-      - name: Upload build outputs
+      - name: Generate ZIP packages
+        if: success()
+        shell: pwsh
+        run: .\deploy\package-artifacts.ps1 -Configuration Release -DotnetPath dotnet
+
+      - name: Upload ZIP packages
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: build-output
+          name: build-packages
           path: |
-            src/**/bin/Release/**
+            artifacts/packages/zip/*.zip
           if-no-files-found: warn

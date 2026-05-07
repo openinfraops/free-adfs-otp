@@ -48,6 +48,14 @@ Le repository inclut [NuGet.Config](../NuGet.Config) avec la source nuget.org.
 - `dotnet restore freeADFSOtp.sln`
 - `dotnet build freeADFSOtp.sln -c Debug`
 
+Generation des ZIP de livraison:
+
+- `./deploy/package-artifacts.ps1 -Configuration Release -DotnetPath "C:\Program Files\dotnet\dotnet.exe"`
+
+Generation versionnee type release:
+
+- `./deploy/package-artifacts.ps1 -Configuration Release -DotnetPath "C:\Program Files\dotnet\dotnet.exe" -PackagePrefix "freeADFSOtp-v1.0.0" -CreateBundle`
+
 ## 4. Lancer portails
 
 - `dotnet run --project src/FreeAdfsOtp.EnrollmentPortal`

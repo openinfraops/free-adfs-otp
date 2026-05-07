@@ -114,9 +114,35 @@ Elle exécute:
 - restore NuGet
 - build Release de la solution sur runner Windows
 - exécution conditionnelle des tests si des projets `*Tests.csproj` sont ajoutés plus tard
-- publication des artefacts de build et des résultats de tests
+- génération de ZIP de livraison
+- publication des ZIP et des résultats de tests
+
+ZIP générés:
+
+- `freeADFSOtp-api.zip`
+- `freeADFSOtp-enrollment-portal.zip`
+- `freeADFSOtp-admin-portal.zip`
+- `freeADFSOtp-adfs-adapter.zip`
+- `freeADFSOtp-complete.zip`
+
+La génération locale utilise [deploy/package-artifacts.ps1](deploy/package-artifacts.ps1).
 
 Note: la CI compile la solution portable du dépôt. Le runtime AD FS serveur nécessitant `Microsoft.IdentityServer.Web.dll` reste destiné au build sur serveur ou environnement disposant de cette DLL.
+
+## Release GitHub
+
+Un workflow de release est fourni dans [/.github/workflows/release.yml](.github/workflows/release.yml).
+
+Déclenchement:
+
+- push d'un tag `v*` comme `v1.0.0`
+
+Ce workflow:
+
+- rebuild la solution en Release
+- génère des ZIP versionnés, par exemple `freeADFSOtp-v1.0.0-api.zip`
+- génère un bundle complet `freeADFSOtp-v1.0.0-complete.zip`
+- crée automatiquement la GitHub Release et y attache tous les ZIP
 
 ## État du projet
 
