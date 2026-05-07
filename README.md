@@ -105,6 +105,12 @@ Entrées principales:
 
 Le runtime AD FS officiel est compilé avec la constante `ADFS_SERVER` et nécessite `Microsoft.IdentityServer.Web.dll` disponible sur serveur AD FS.
 
+Mode simplifie (scripts interactifs + config reutilisable ferme):
+
+- [deploy/DEPLOY-QUICKSTART.md](deploy/DEPLOY-QUICKSTART.md)
+- [deploy/adfs/Setup-AdfsOtpNode.ps1](deploy/adfs/Setup-AdfsOtpNode.ps1)
+- [deploy/web/Setup-WebOtpNode.ps1](deploy/web/Setup-WebOtpNode.ps1)
+
 ## CI GitHub
 
 Une pipeline GitHub Actions est fournie dans [/.github/workflows/ci.yml](.github/workflows/ci.yml).
