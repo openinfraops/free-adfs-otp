@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - develop
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+          cache: true
+          cache-dependency-path: |
+            NuGet.Config
+            **/*.csproj
+
+      - name: Restore solution
+        run: dotnet restore .\freeADFSOtp.sln --configfile .\NuGet.Config
+
+      - name: Build solution
+        run: dotnet build .\freeADFSOtp.sln -c Release --no-restore
+
+      - name: Run tests if present
+        shell: pwsh
+        run: |
+          $testProjects = Get-ChildItem -Recurse -Filter *.csproj | Where-Object { $_.Name -match 'Tests?\.csproj$' }
+          if (-not $testProjects) {
+            Write-Host 'No test projects found. Skipping tests.'
+            exit 0
+          }
+
+          foreach ($project in $testProjects) {
+            Write-Host "Running tests for $($project.FullName)"
+            dotnet test $project.FullName -c Release --no-build --logger "trx;LogFileName=$($project.BaseName).trx"
+          }
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: '**/*.trx'
+          if-no-files-found: ignore
+
+      - name: Upload build outputs
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output
+          path: |
+            src/**/bin/Release/**
+          if-no-files-found: warn

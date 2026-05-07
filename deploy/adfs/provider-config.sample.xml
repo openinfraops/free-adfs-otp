@@ -1,0 +1,4 @@
+<Config>
+  <ApiBaseUrl>https://otp-api.contoso.local/</ApiBaseUrl>
+  <EnrollmentPortalBaseUrl>https://otp-enroll.contoso.local/enroll</EnrollmentPortalBaseUrl>
+</Config>

@@ -1,0 +1,79 @@
+# Build output
+[Bb]in/
+[Oo]bj/
+out/
+publish/
+artifacts/
+TestResults/
+
+# .NET user and IDE files
+*.user
+*.rsuser
+*.suo
+*.userosscache
+*.sln.docstates
+.vs/
+
+# VS Code local workspace files
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/launch.json
+!.vscode/tasks.json
+
+# Logs and diagnostics
+*.log
+logs/
+*.tmp
+*.temp
+*.cache
+
+# NuGet
+packages/
+*.nupkg
+*.snupkg
+.nuget/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local app configuration overrides and secrets
+appsettings.Development.json
+appsettings.Local.json
+appsettings.*.local.json
+*.secrets.json
+secrets.json
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Certificates and keys
+*.pfx
+*.snk
+*.key
+*.pem
+*.cer
+
+# SQL local files
+*.mdf
+*.ldf
+
+# PowerShell artifacts
+*.ps1xml
+
+# AD FS deployment local environment configs
+/deploy/adfs/environments/*.psd1
+!/deploy/adfs/environments/*.sample.psd1
+/deploy/adfs/provider-config.xml
+
+# Rider / ReSharper
+.idea/
+_ReSharper*/
+*.DotSettings.user
+
+# Optional local notes
+*.local.md

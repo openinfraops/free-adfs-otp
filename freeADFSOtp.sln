@@ -1,0 +1,46 @@
+
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FreeAdfsOtp.Core", "src\FreeAdfsOtp.Core\FreeAdfsOtp.Core.csproj", "{B8A2431D-2A04-45A8-A0CF-6F2B070D4683}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FreeAdfsOtp.Api", "src\FreeAdfsOtp.Api\FreeAdfsOtp.Api.csproj", "{44688D79-D844-4FF7-8CF5-7841B544F98E}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FreeAdfsOtp.EnrollmentPortal", "src\FreeAdfsOtp.EnrollmentPortal\FreeAdfsOtp.EnrollmentPortal.csproj", "{21B4BC37-53AA-4107-8BA5-1126559AA9CC}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FreeAdfsOtp.AdminPortal", "src\FreeAdfsOtp.AdminPortal\FreeAdfsOtp.AdminPortal.csproj", "{DACBBA56-8847-4D40-AB25-2A430CDB7CD8}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FreeAdfsOtp.AdfsAdapter", "src\FreeAdfsOtp.AdfsAdapter\FreeAdfsOtp.AdfsAdapter.csproj", "{EC1F75C7-FB08-4E79-9C42-AB6F1C30318F}"
+EndProject
+Global
+    GlobalSection(SolutionConfigurationPlatforms) = preSolution
+        Debug|Any CPU = Debug|Any CPU
+        Release|Any CPU = Release|Any CPU
+    EndGlobalSection
+    GlobalSection(ProjectConfigurationPlatforms) = postSolution
+        {B8A2431D-2A04-45A8-A0CF-6F2B070D4683}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+        {B8A2431D-2A04-45A8-A0CF-6F2B070D4683}.Debug|Any CPU.Build.0 = Debug|Any CPU
+        {B8A2431D-2A04-45A8-A0CF-6F2B070D4683}.Release|Any CPU.ActiveCfg = Release|Any CPU
+        {B8A2431D-2A04-45A8-A0CF-6F2B070D4683}.Release|Any CPU.Build.0 = Release|Any CPU
+        {44688D79-D844-4FF7-8CF5-7841B544F98E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+        {44688D79-D844-4FF7-8CF5-7841B544F98E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+        {44688D79-D844-4FF7-8CF5-7841B544F98E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+        {44688D79-D844-4FF7-8CF5-7841B544F98E}.Release|Any CPU.Build.0 = Release|Any CPU
+        {21B4BC37-53AA-4107-8BA5-1126559AA9CC}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+        {21B4BC37-53AA-4107-8BA5-1126559AA9CC}.Debug|Any CPU.Build.0 = Debug|Any CPU
+        {21B4BC37-53AA-4107-8BA5-1126559AA9CC}.Release|Any CPU.ActiveCfg = Release|Any CPU
+        {21B4BC37-53AA-4107-8BA5-1126559AA9CC}.Release|Any CPU.Build.0 = Release|Any CPU
+        {DACBBA56-8847-4D40-AB25-2A430CDB7CD8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+        {DACBBA56-8847-4D40-AB25-2A430CDB7CD8}.Debug|Any CPU.Build.0 = Debug|Any CPU
+        {DACBBA56-8847-4D40-AB25-2A430CDB7CD8}.Release|Any CPU.ActiveCfg = Release|Any CPU
+        {DACBBA56-8847-4D40-AB25-2A430CDB7CD8}.Release|Any CPU.Build.0 = Release|Any CPU
+        {EC1F75C7-FB08-4E79-9C42-AB6F1C30318F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+        {EC1F75C7-FB08-4E79-9C42-AB6F1C30318F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+        {EC1F75C7-FB08-4E79-9C42-AB6F1C30318F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+        {EC1F75C7-FB08-4E79-9C42-AB6F1C30318F}.Release|Any CPU.Build.0 = Release|Any CPU
+    EndGlobalSection
+    GlobalSection(SolutionProperties) = preSolution
+        HideSolutionNode = FALSE
+    EndGlobalSection
+EndGlobal
