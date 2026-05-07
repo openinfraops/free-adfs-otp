@@ -32,9 +32,11 @@ public static class TotpService
     public static string ComputeCode(byte[] secret, long timeStep, int digits)
     {
         Span<byte> stepBytes = stackalloc byte[8];
-        var networkStep = BitConverter.IsLittleEndian
-            ? BitConverter.GetBytes(timeStep).Reverse().ToArray()
-            : BitConverter.GetBytes(timeStep);
+        var networkStep = BitConverter.GetBytes(timeStep);
+        if (BitConverter.IsLittleEndian)
+        {
+            Array.Reverse(networkStep);
+        }
 
         networkStep.CopyTo(stepBytes);
 
