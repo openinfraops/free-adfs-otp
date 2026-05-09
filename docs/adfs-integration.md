@@ -1,62 +1,88 @@
 # Integration AD FS (2019/2022)
 
-## 1) Packaging adapter
+Ce document decrit le mode de deploiement actuellement implemente dans les scripts AD FS.
 
-- Compiler un adapter AD FS en .NET Framework 4.8.
-- Signer l'assembly.
-- Deployer DLL + dependances sur chaque serveur AD FS.
-- Redemarrer le service AD FS si necessaire selon mode de deploiement.
+## 1) Prerequis
 
-## 2) Enregistrement provider
+- Serveur AD FS 2019/2022
+- Session PowerShell en mode administrateur
+- ZIP adapter AD FS genere par la CI/release
+- Acces SQL depuis le serveur AD FS
 
-Exemple PowerShell (a adapter):
+Compatibilite runtime adapter:
 
-- Register-AdfsAuthenticationProvider -Name "freeADFSOtp" -TypeName "Company.Security.AdfsOtpAdapter, Company.Security.AdfsOtpAdapter"
-- Add-AdfsAuthenticationProviderWebContent -Name "freeADFSOtp" -Locale "fr" -Identifier "signin" -FilePath "C:\adfs-otp\signin-fr.html"
+- target .NET Framework 4.5 (net45)
 
-Verifier:
+## 2) Provider AD FS
 
-- Get-AdfsAuthenticationProvider
+Nom du provider:
 
-## 3) Activation en secondaire (MFA)
+- fixe a `Free-ADFS-OTP`
 
-Exemple:
+TypeName:
 
-- Set-AdfsGlobalAuthenticationPolicy -AdditionalAuthenticationProvider "freeADFSOtp"
+- detecte automatiquement depuis `FreeAdfsOtp.AdfsAdapter.dll` par le script
+- aucune saisie manuelle du TypeName n'est necessaire
 
-Puis via Access Control Policies / Authentication Policies:
+## 3) Deploiement recommande (script unique)
 
-- cibler les relying parties
-- definir quand le facteur additionnel est exige
+Script:
 
-## 4) Activation en primaire
+- `./deploy/adfs/Setup-AdfsOtpNode.ps1`
 
-Selon votre politique AD FS et version, activer le provider externe en primaire (intranet/extranet) via Global Authentication Policy.
+Premier noeud (interactif + fichier de config reutilisable):
 
-Points d'attention:
+- `./deploy/adfs/Setup-AdfsOtpNode.ps1 -Interactive`
 
-- tester intranet et extranet separement
-- verifier fallback admin break-glass
-- verifier compatibilite WIA/forms + provider externe
+Noeuds suivants (meme config):
 
-## 5) Enrollment redirection
+- `./deploy/adfs/Setup-AdfsOtpNode.ps1 -ConfigPath ./deploy/adfs/adfs-node.config.psd1`
 
-Dans le flux adapter:
+Simulation:
 
-- check enrollment status (API OTP)
-- si non enrole: redirection vers Enrollment Portal
-- apres enrollement: reprise pipeline AD FS avec contexte de correlation
+- `./deploy/adfs/Setup-AdfsOtpNode.ps1 -ConfigPath ./deploy/adfs/adfs-node.config.psd1 -DryRun`
 
-## 6) Exploitation
+## 4) Informations demandees en interactif
 
-- Deployer en ferme AD FS complete (tous les noeuds)
-- Externaliser config vers SQL Settings
-- Ajouter health checks API OTP
-- Supervision sur erreurs adapter + taux echec OTP
+- chemin du ZIP adapter
+- SQL Server (nom serveur/instance ou serveur,port)
+- base SQL (defaut: `FreeAdfsOtp`)
+- mode d'auth SQL:
+	- integree
+	- ou login/mot de passe
+- cle `SecretMasterKeyBase64` (identique a l'API)
+- URL du portail d'enrollement
+- options de policy AD FS (externe uniquement, application regle globale, etc.)
 
-## 7) Securite
+## 5) Installation GAC
 
-- Timeout strict adapter->API (ex 2-3s)
-- Retry limite et circuit breaker
-- Certificat TLS interne valide
-- Journalisation correlationId pour tracer bout en bout
+Le deploiement utilise la methode .NET:
+
+- `System.EnterpriseServices.Internal.Publish.GacInstall(...)`
+
+Le workflow ne depend plus de `gacutil.exe`.
+
+## 6) MFA policy
+
+Le script peut automatiquement:
+
+- enregistrer le provider `Free-ADFS-OTP`
+- l'ajouter a `AdditionalAuthenticationProvider`
+- appliquer la regle AD FS globale MFA
+
+Externe uniquement (recommande):
+
+- MFA imposee quand `insidecorporatenetwork == false`
+
+## 7) Flux utilisateur non enrole
+
+- l'adapter verifie l'etat d'enrollement OTP
+- si non enrole: redirection vers `EnrollmentPortalBaseUrl`
+- apres enrollement OTP valide: reprise normale de l'authentification AD FS
+
+## 8) Bonnes pratiques exploitation
+
+- deploiement homogene sur tous les noeuds AD FS de la ferme
+- supervision des echecs OTP, lockouts et erreurs provider
+- verification de la connectivite SQL depuis chaque noeud
+- conservation stricte de la meme `SecretMasterKeyBase64` entre API et adapter

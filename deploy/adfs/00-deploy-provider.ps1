@@ -22,6 +22,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$FixedProviderName = "Free-ADFS-OTP"
 
 function Resolve-RepoPath {
     param([string]$Path)
@@ -55,18 +56,20 @@ function Invoke-Step {
 $configFullPath = Resolve-RepoPath $ConfigPath
 $config = Import-PowerShellDataFile -Path $configFullPath
 
-$providerName = $config.ProviderName
+$providerName = $FixedProviderName
 $typeName = $config.TypeName
 $dotnetPath = $config.DotnetPath
 $adfsAssemblyPath = $config.AdfsAssemblyPath
-$gacutilPath = $config.GacutilPath
 $buildConfiguration = $config.BuildConfiguration
 $framework = $config.Framework
 $outputPath = $config.OutputPath
 $adapterDllPath = Resolve-RepoPath $config.AdapterDllPath
 $configurationFilePath = Resolve-RepoPath $config.ConfigurationFilePath
 
-if ([string]::IsNullOrWhiteSpace($providerName)) { throw "ProviderName missing in config." }
+if ($config.ContainsKey("ProviderName") -and -not [string]::IsNullOrWhiteSpace($config.ProviderName) -and $config.ProviderName -ne $FixedProviderName) {
+    Write-Warning "ProviderName '$($config.ProviderName)' in config is ignored. Using fixed name '$FixedProviderName'."
+}
+
 if ([string]::IsNullOrWhiteSpace($typeName)) { throw "TypeName missing in config." }
 
 Write-Host "Deploying provider: $providerName"
@@ -86,7 +89,6 @@ if (-not $SkipBuild) {
 if (-not $SkipGac) {
     Invoke-Step -ScriptPath (Join-Path $PSScriptRoot "02-gac-install.ps1") -Parameters @{
         AdapterDllPath = $adapterDllPath
-        GacutilPath = $gacutilPath
     }
 }
 

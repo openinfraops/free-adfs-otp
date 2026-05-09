@@ -13,6 +13,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$FixedProviderName = "Free-ADFS-OTP"
 
 function Test-IsAdministrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -47,7 +48,6 @@ function Write-ConfigFile {
     ProviderName = '$(Escape-Psd1String $Config.ProviderName)'
     TypeName = '$(Escape-Psd1String $Config.TypeName)'
     AdapterZipPath = '$(Escape-Psd1String $Config.AdapterZipPath)'
-    GacutilPath = '$(Escape-Psd1String $Config.GacutilPath)'
     SqlConnectionString = '$(Escape-Psd1String $Config.SqlConnectionString)'
     SecretMasterKeyBase64 = '$(Escape-Psd1String $Config.SecretMasterKeyBase64)'
     EnrollmentPortalBaseUrl = '$(Escape-Psd1String $Config.EnrollmentPortalBaseUrl)'
@@ -78,6 +78,38 @@ function Read-Bool {
     return @("y", "yes", "o", "oui", "1", "true") -contains $raw.Trim().ToLowerInvariant()
 }
 
+function Build-SqlConnectionString {
+    param(
+        [string]$SqlServer,
+        [string]$SqlDatabase,
+        [bool]$UseIntegratedSecurity,
+        [string]$SqlUser,
+        [string]$SqlPassword
+    )
+
+    if ([string]::IsNullOrWhiteSpace($SqlServer)) {
+        throw "SqlServer is required."
+    }
+
+    if ([string]::IsNullOrWhiteSpace($SqlDatabase)) {
+        $SqlDatabase = "FreeAdfsOtp"
+    }
+
+    if ($UseIntegratedSecurity) {
+        return "Server=$SqlServer;Database=$SqlDatabase;Integrated Security=true;TrustServerCertificate=true;"
+    }
+
+    if ([string]::IsNullOrWhiteSpace($SqlUser)) {
+        throw "SqlUser is required when integrated security is disabled."
+    }
+
+    if ([string]::IsNullOrWhiteSpace($SqlPassword)) {
+        throw "SqlPassword is required when integrated security is disabled."
+    }
+
+    return "Server=$SqlServer;Database=$SqlDatabase;User Id=$SqlUser;Password=$SqlPassword;TrustServerCertificate=true;"
+}
+
 function Build-ProviderConfigXml {
     param(
                 [string]$SqlConnectionString,
@@ -101,22 +133,11 @@ function Build-ProviderConfigXml {
 function Install-AssemblyInGac {
     param(
         [string]$AssemblyPath,
-        [string]$GacutilPath,
         [switch]$DryRun
     )
 
     if ($DryRun) {
-        if (Test-Path $GacutilPath) {
-            Write-Host "[DRY-RUN] & $GacutilPath /if $AssemblyPath"
-        }
-        else {
-            Write-Host "[DRY-RUN] Publish.GacInstall($AssemblyPath)"
-        }
-        return
-    }
-
-    if (Test-Path $GacutilPath) {
-        & $GacutilPath /if $AssemblyPath
+        Write-Host "[DRY-RUN] Publish.GacInstall($AssemblyPath)"
         return
     }
 
@@ -181,12 +202,24 @@ $configExists = Test-Path $configFullPath
 if ($Interactive -or -not $configExists) {
     Write-Host "Interactive setup for AD FS OTP node"
 
-    $providerName = Read-Host "Provider name"; if ([string]::IsNullOrWhiteSpace($providerName)) { $providerName = "freeADFSOtp" }
+    $providerName = $FixedProviderName
+    Write-Host "Provider name is fixed to: $providerName"
 
     $adapterZipPath = Read-Host "Adapter ZIP path (e.g. C:\packages\freeADFSOtp-v1.0.0-adfs-node-package.zip)"
-    $gacutilPath = Read-Host "gacutil.exe path"; if ([string]::IsNullOrWhiteSpace($gacutilPath)) { $gacutilPath = "C:\Tools\gacutil.exe" }
-    $sqlConnectionString = Read-Host "SQL connection string for OTP validation"
-    if ([string]::IsNullOrWhiteSpace($sqlConnectionString)) { throw "SqlConnectionString is required." }
+
+    $sqlServer = Read-Host "SQL server name (host\\instance or host,port)"
+    $sqlDatabase = Read-Host "SQL database name"; if ([string]::IsNullOrWhiteSpace($sqlDatabase)) { $sqlDatabase = "FreeAdfsOtp" }
+    $useIntegratedSecurity = Read-Bool -Prompt "Use integrated security for SQL" -Default $true
+
+    $sqlUser = ""
+    $sqlPassword = ""
+    if (-not $useIntegratedSecurity) {
+        $sqlUser = Read-Host "SQL user"
+        $sqlPassword = Read-Host "SQL password (stored in plain text in config)"
+    }
+
+    $sqlConnectionString = Build-SqlConnectionString -SqlServer $sqlServer -SqlDatabase $sqlDatabase -UseIntegratedSecurity $useIntegratedSecurity -SqlUser $sqlUser -SqlPassword $sqlPassword
+
     $secretMasterKeyBase64 = Read-Host "Secret master key base64 (same key as API)"
     if ([string]::IsNullOrWhiteSpace($secretMasterKeyBase64)) { throw "SecretMasterKeyBase64 is required." }
     $enrollmentPortalBaseUrl = Read-Host "Enrollment portal URL"; if ([string]::IsNullOrWhiteSpace($enrollmentPortalBaseUrl)) { throw "EnrollmentPortalBaseUrl is required." }
@@ -200,7 +233,6 @@ if ($Interactive -or -not $configExists) {
         ProviderName = $providerName
         TypeName = ""
         AdapterZipPath = $adapterZipPath
-        GacutilPath = $gacutilPath
         SqlConnectionString = $sqlConnectionString
         SecretMasterKeyBase64 = $secretMasterKeyBase64
         EnrollmentPortalBaseUrl = $enrollmentPortalBaseUrl
@@ -216,9 +248,12 @@ if ($Interactive -or -not $configExists) {
 
 $config = Import-PowerShellDataFile -Path $configFullPath
 
-$providerName = $config.ProviderName
+if ($config.ContainsKey("ProviderName") -and -not [string]::IsNullOrWhiteSpace($config.ProviderName) -and $config.ProviderName -ne $FixedProviderName) {
+    Write-Warning "ProviderName '$($config.ProviderName)' in config is ignored. Using fixed name '$FixedProviderName'."
+}
+
+$providerName = $FixedProviderName
 $adapterZipPath = Resolve-RepoPath $config.AdapterZipPath
-$gacutilPath = Resolve-RepoPath $config.GacutilPath
 $sqlConnectionString = $config.SqlConnectionString
 $secretMasterKeyBase64 = $config.SecretMasterKeyBase64
 $enrollmentPortalBaseUrl = $config.EnrollmentPortalBaseUrl
@@ -251,7 +286,7 @@ Build-ProviderConfigXml -SqlConnectionString $sqlConnectionString -SecretMasterK
 Write-Host "Provider XML generated: $providerConfigPath"
 
 Invoke-IfNotDryRun -Description "Install adapter DLL into GAC" -Action {
-    Install-AssemblyInGac -AssemblyPath $adapterDll.FullName -GacutilPath $gacutilPath
+    Install-AssemblyInGac -AssemblyPath $adapterDll.FullName
 }
 
 $existingProvider = Get-AdfsAuthenticationProvider | Where-Object { $_.Name -eq $providerName }
