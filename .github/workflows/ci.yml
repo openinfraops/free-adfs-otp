@@ -92,24 +92,22 @@ jobs:
         if: success()
         shell: pwsh
         run: |
-          $args = @(
-            '-Configuration', 'Release',
-            '-DotnetPath', 'dotnet'
-          )
+          $params = @{
+            Configuration = 'Release'
+            DotnetPath = 'dotnet'
+          }
 
           if ($env:SIGN_ADAPTER -eq 'true') {
-            $args += '-SignAdapter'
-            $args += '-AdapterKeyFile'
-            $args += $env:ADAPTER_KEY_FILE
+            $params.SignAdapter = $true
+            $params.AdapterKeyFile = $env:ADAPTER_KEY_FILE
           }
 
           if ($env:BUILD_ADFS_RUNTIME -eq 'true') {
-            $args += '-BuildAdfsRuntime'
-            $args += '-AdfsWebDll'
-            $args += $env:ADFS_WEB_DLL
+            $params.BuildAdfsRuntime = $true
+            $params.AdfsWebDll = $env:ADFS_WEB_DLL
           }
 
-          & .\deploy\package-artifacts.ps1 @args
+          & .\deploy\package-artifacts.ps1 @params
 
       - name: Upload ZIP packages
         if: success()
