@@ -98,6 +98,61 @@ function Build-ProviderConfigXml {
     Set-Content -Path $DestinationPath -Value $xml -Encoding UTF8
 }
 
+function Install-AssemblyInGac {
+    param(
+        [string]$AssemblyPath,
+        [string]$GacutilPath,
+        [switch]$DryRun
+    )
+
+    if ($DryRun) {
+        if (Test-Path $GacutilPath) {
+            Write-Host "[DRY-RUN] & $GacutilPath /if $AssemblyPath"
+        }
+        else {
+            Write-Host "[DRY-RUN] Publish.GacInstall($AssemblyPath)"
+        }
+        return
+    }
+
+    if (Test-Path $GacutilPath) {
+        & $GacutilPath /if $AssemblyPath
+        return
+    }
+
+    Add-Type -AssemblyName System.EnterpriseServices
+    $publish = New-Object System.EnterpriseServices.Internal.Publish
+    $publish.GacInstall($AssemblyPath)
+}
+
+function Get-AdapterTypeName {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$AssemblyPath,
+
+        [Parameter(Mandatory = $false)]
+        [string]$AdapterClassName = "FreeAdfsOtp.AdfsAdapter.AdapterRuntime.FreeAdfsOtpAuthenticationAdapter"
+    )
+
+    $assemblyName = [System.Reflection.AssemblyName]::GetAssemblyName($AssemblyPath)
+    $pktBytes = $assemblyName.GetPublicKeyToken()
+    $pkt = if ($pktBytes -and $pktBytes.Length -gt 0) {
+        ([System.BitConverter]::ToString($pktBytes)).Replace('-', '').ToLowerInvariant()
+    }
+    else {
+        "null"
+    }
+
+    $culture = if ([string]::IsNullOrWhiteSpace($assemblyName.CultureName)) {
+        "neutral"
+    }
+    else {
+        $assemblyName.CultureName
+    }
+
+    return "$AdapterClassName, $($assemblyName.Name), Version=$($assemblyName.Version), Culture=$culture, PublicKeyToken=$pkt, processorArchitecture=MSIL"
+}
+
 function Invoke-IfNotDryRun {
     param(
         [scriptblock]$Action,
@@ -127,10 +182,6 @@ if ($Interactive -or -not $configExists) {
     Write-Host "Interactive setup for AD FS OTP node"
 
     $providerName = Read-Host "Provider name"; if ([string]::IsNullOrWhiteSpace($providerName)) { $providerName = "freeADFSOtp" }
-    $typeName = Read-Host "Provider TypeName (strong type incl. public key token)"
-    if ([string]::IsNullOrWhiteSpace($typeName)) {
-        throw "TypeName is required."
-    }
 
     $adapterZipPath = Read-Host "Adapter ZIP path (e.g. C:\packages\freeADFSOtp-v1.0.0-adfs-node-package.zip)"
     $gacutilPath = Read-Host "gacutil.exe path"; if ([string]::IsNullOrWhiteSpace($gacutilPath)) { $gacutilPath = "C:\Tools\gacutil.exe" }
@@ -147,7 +198,7 @@ if ($Interactive -or -not $configExists) {
 
     $config = @{
         ProviderName = $providerName
-        TypeName = $typeName
+        TypeName = ""
         AdapterZipPath = $adapterZipPath
         GacutilPath = $gacutilPath
         SqlConnectionString = $sqlConnectionString
@@ -166,7 +217,6 @@ if ($Interactive -or -not $configExists) {
 $config = Import-PowerShellDataFile -Path $configFullPath
 
 $providerName = $config.ProviderName
-$typeName = $config.TypeName
 $adapterZipPath = Resolve-RepoPath $config.AdapterZipPath
 $gacutilPath = Resolve-RepoPath $config.GacutilPath
 $sqlConnectionString = $config.SqlConnectionString
@@ -181,10 +231,6 @@ if (-not (Test-Path $adapterZipPath)) {
     throw "Adapter ZIP not found: $adapterZipPath"
 }
 
-if (-not (Test-Path $gacutilPath)) {
-    throw "gacutil.exe not found: $gacutilPath"
-}
-
 $tempRoot = Join-Path $env:TEMP ("freeadfsotp-adfs-" + [Guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
 
@@ -197,12 +243,15 @@ if (-not $adapterDll) {
     throw "FreeAdfsOtp.AdfsAdapter.dll not found in ZIP: $adapterZipPath"
 }
 
+$typeName = Get-AdapterTypeName -AssemblyPath $adapterDll.FullName
+Write-Host "Auto-detected TypeName: $typeName"
+
 $providerConfigPath = Join-Path (Split-Path -Parent $configFullPath) "provider-config.generated.xml"
 Build-ProviderConfigXml -SqlConnectionString $sqlConnectionString -SecretMasterKeyBase64 $secretMasterKeyBase64 -EnrollmentPortalBaseUrl $enrollmentPortalBaseUrl -DestinationPath $providerConfigPath
 Write-Host "Provider XML generated: $providerConfigPath"
 
 Invoke-IfNotDryRun -Description "Install adapter DLL into GAC" -Action {
-    & $gacutilPath /if $adapterDll.FullName
+    Install-AssemblyInGac -AssemblyPath $adapterDll.FullName -GacutilPath $gacutilPath
 }
 
 $existingProvider = Get-AdfsAuthenticationProvider | Where-Object { $_.Name -eq $providerName }

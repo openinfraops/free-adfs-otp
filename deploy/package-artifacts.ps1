@@ -133,6 +133,7 @@ New-ZipFromDirectory -SourceDirectory (Join-Path $stagingRoot "enrollment-portal
 New-ZipFromDirectory -SourceDirectory (Join-Path $stagingRoot "admin-portal") -ZipFilePath (Join-Path $adminPackageStaging "apps\admin-portal.zip")
 New-Item -ItemType Directory -Path (Join-Path $adminPackageStaging "deploy\web") -Force | Out-Null
 Copy-Item -Force (Join-Path $deployWebPath 'Setup-WebOtpNode.ps1') (Join-Path $adminPackageStaging "deploy\web\Setup-WebOtpNode.ps1")
+Copy-Item -Force (Join-Path $deployWebPath 'Update-EnrollmentPortal.ps1') (Join-Path $adminPackageStaging "deploy\web\Update-EnrollmentPortal.ps1")
 Copy-Item -Recurse -Force $sqlPath (Join-Path $adminPackageStaging "sql")
 Copy-Item -Force (Join-Path $docsPath 'runbook-local.md') $adminPackageStaging
 Copy-Item -Force (Join-Path $docsPath 'architecture.md') $adminPackageStaging

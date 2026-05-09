@@ -73,6 +73,15 @@ Le portail d'enrôlement génère:
 - un QR code PNG affichable dans le navigateur
 - un libellé téléphone au format `IDP:Compte`
 
+Par défaut, le portail d'enrôlement identifie l'utilisateur via authentification Windows intégrée (IIS/Negotiate) et n'accepte plus la saisie libre de l'UPN.
+
+Paramètres du portail d'enrôlement:
+
+- [src/FreeAdfsOtp.EnrollmentPortal/appsettings.json](src/FreeAdfsOtp.EnrollmentPortal/appsettings.json) > `Enrollment:IdpName`
+- [src/FreeAdfsOtp.EnrollmentPortal/appsettings.json](src/FreeAdfsOtp.EnrollmentPortal/appsettings.json) > `Enrollment:AllowedWindowsDomain`
+- [src/FreeAdfsOtp.EnrollmentPortal/appsettings.json](src/FreeAdfsOtp.EnrollmentPortal/appsettings.json) > `Enrollment:DefaultUpnSuffix`
+- [src/FreeAdfsOtp.EnrollmentPortal/appsettings.json](src/FreeAdfsOtp.EnrollmentPortal/appsettings.json) > `Enrollment:AllowManualUpn` (desactive par defaut)
+
 Exemple de libellé:
 
 - `ContosoIDP:user@contoso.com`
@@ -85,6 +94,8 @@ Exemple de libellé:
 - protection minimale des endpoints admin via header `X-Admin-ApiKey`
 - rate limiting par IP et par UPN sur les endpoints critiques
 - nettoyage automatique des enrollments expirés
+- portail d'enrôlement protégé par authentification Windows intégrée, avec résolution automatique du compte
+- en-têtes de durcissement web sur le portail d'enrôlement (HSTS/CSP/X-Frame-Options/X-Content-Type-Options)
 
 Points restant à traiter avant production complète:
 

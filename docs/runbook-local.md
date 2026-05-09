@@ -61,11 +61,26 @@ Generation versionnee type release:
 - `dotnet run --project src/FreeAdfsOtp.EnrollmentPortal`
 - `dotnet run --project src/FreeAdfsOtp.AdminPortal`
 
+Configuration recommandee du portail d'enrôlement:
+
+- [src/FreeAdfsOtp.EnrollmentPortal/appsettings.json](../src/FreeAdfsOtp.EnrollmentPortal/appsettings.json)
+   - `Enrollment:IdpName`: identifiant fournisseur affiche dans le label OTP
+   - `Enrollment:AllowedWindowsDomain`: nom NetBIOS autorise (ex: `CONTOSO`)
+   - `Enrollment:DefaultUpnSuffix`: suffixe UPN pour convertir `DOMAINE\utilisateur` en `utilisateur@domaine`
+   - `Enrollment:AllowManualUpn`: laisser `false` en production
+
+Sous IIS (recommande en production):
+
+1. Activer `Windows Authentication` sur le site
+2. Desactiver `Anonymous Authentication`
+3. Forcer HTTPS
+
 ## 5. Test rapide
 
 1. Enrollment:
    - Ouvrir `/enroll`
-   - Renseigner UPN + `Nom IDP` + `Nom du compte`
+   - Verifier que l'utilisateur est detecte automatiquement via la session Windows
+   - Renseigner uniquement le libelle compte (optionnel)
    - Scanner le QR code genere dans l'app OTP
    - Verifier que le libelle affiche `IDP:Compte`
    - Verifier code

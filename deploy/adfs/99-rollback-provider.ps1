@@ -74,15 +74,23 @@ if ($RemoveFromGac) {
     }
 
     $gacutilPath = $config.GacutilPath
-    if ([string]::IsNullOrWhiteSpace($gacutilPath)) {
-        throw "GacutilPath missing in config."
-    }
-
     if ($DryRun) {
-        Write-Host "[DRY-RUN] & $gacutilPath /u \"$GacIdentity\""
+        if (-not [string]::IsNullOrWhiteSpace($gacutilPath) -and (Test-Path $gacutilPath)) {
+            Write-Host "[DRY-RUN] & $gacutilPath /u \"$GacIdentity\""
+        }
+        else {
+            Write-Host "[DRY-RUN] Publish.GacRemove($GacIdentity)"
+        }
     }
     else {
-        & $gacutilPath /u $GacIdentity
+        if (-not [string]::IsNullOrWhiteSpace($gacutilPath) -and (Test-Path $gacutilPath)) {
+            & $gacutilPath /u $GacIdentity
+        }
+        else {
+            Add-Type -AssemblyName System.EnterpriseServices
+            $publish = New-Object System.EnterpriseServices.Internal.Publish
+            $publish.GacRemove($GacIdentity)
+        }
     }
 }
 

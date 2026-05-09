@@ -59,6 +59,13 @@ function Write-ConfigFile {
 
     MasterKeyBase64 = '$(Escape-Psd1String $Config.MasterKeyBase64)'
     AdminApiKey = '$(Escape-Psd1String $Config.AdminApiKey)'
+
+    EnrollmentIdpName = '$(Escape-Psd1String $Config.EnrollmentIdpName)'
+    EnrollmentAllowedWindowsDomain = '$(Escape-Psd1String $Config.EnrollmentAllowedWindowsDomain)'
+    EnrollmentDefaultUpnSuffix = '$(Escape-Psd1String $Config.EnrollmentDefaultUpnSuffix)'
+    EnrollmentAllowManualUpn = `$$($Config.EnrollmentAllowManualUpn)
+    EnrollmentUseWindowsAuthentication = `$$($Config.EnrollmentUseWindowsAuthentication)
+    EnrollmentDisableAnonymousAuthentication = `$$($Config.EnrollmentDisableAnonymousAuthentication)
 }
 "@
 
@@ -117,10 +124,49 @@ function Update-JsonFile {
     $json | ConvertTo-Json -Depth 20 | Set-Content -Path $Path -Encoding UTF8
 }
 
+function Ensure-JsonObjectProperty {
+    param(
+        [object]$Object,
+        [string]$PropertyName
+    )
+
+    $existing = $Object.PSObject.Properties[$PropertyName]
+    if ($null -eq $existing -or $null -eq $existing.Value) {
+        $Object | Add-Member -MemberType NoteProperty -Name $PropertyName -Value ([pscustomobject]@{}) -Force
+    }
+
+    return $Object.PSObject.Properties[$PropertyName].Value
+}
+
+function Get-ConfigValue {
+    param(
+        [hashtable]$Config,
+        [string]$Name,
+        $DefaultValue
+    )
+
+    if ($Config.ContainsKey($Name) -and $null -ne $Config[$Name]) {
+        return $Config[$Name]
+    }
+
+    return $DefaultValue
+}
+
 function Ensure-IIS {
     if (Get-Command Install-WindowsFeature -ErrorAction SilentlyContinue) {
-        Install-WindowsFeature Web-Server,Web-WebServer,Web-Common-Http,Web-Static-Content,Web-Default-Doc,Web-Http-Errors,Web-Health,Web-Http-Logging,Web-Performance,Web-Stat-Compression,Web-Security,Web-Filtering,Web-App-Dev,Web-Net-Ext45,Web-Asp-Net45,Web-ISAPI-Ext,Web-ISAPI-Filter,Web-Mgmt-Tools -IncludeManagementTools | Out-Null
+        Install-WindowsFeature Web-Server,Web-WebServer,Web-Common-Http,Web-Static-Content,Web-Default-Doc,Web-Http-Errors,Web-Health,Web-Http-Logging,Web-Performance,Web-Stat-Compression,Web-Security,Web-Filtering,Web-Windows-Auth,Web-App-Dev,Web-Net-Ext45,Web-Asp-Net45,Web-ISAPI-Ext,Web-ISAPI-Filter,Web-Mgmt-Tools -IncludeManagementTools | Out-Null
     }
+}
+
+function Set-SiteAuthentication {
+    param(
+        [string]$SiteName,
+        [bool]$EnableWindowsAuthentication,
+        [bool]$EnableAnonymousAuthentication
+    )
+
+    Set-WebConfigurationProperty -PSPath "IIS:\" -Location $SiteName -Filter "system.webServer/security/authentication/windowsAuthentication" -Name "enabled" -Value $EnableWindowsAuthentication
+    Set-WebConfigurationProperty -PSPath "IIS:\" -Location $SiteName -Filter "system.webServer/security/authentication/anonymousAuthentication" -Name "enabled" -Value $EnableAnonymousAuthentication
 }
 
 if (-not (Test-IsAdministrator)) {
@@ -160,6 +206,13 @@ if ($Interactive -or -not $configExists) {
     $masterKeyBase64 = Read-Host "API SecretProtection:MasterKey (base64 32 bytes)"
     $adminApiKey = Read-Host "Admin API key (same value for API and admin portal)"
 
+    $enrollmentIdpName = Read-Host "Enrollment IDP name"; if ([string]::IsNullOrWhiteSpace($enrollmentIdpName)) { $enrollmentIdpName = "freeADFSOtp" }
+    $enrollmentAllowedWindowsDomain = Read-Host "Enrollment allowed Windows domain (NetBIOS, optional)"
+    $enrollmentDefaultUpnSuffix = Read-Host "Enrollment default UPN suffix (required if identity is DOMAINE\\user)"
+    $enrollmentAllowManualUpn = Read-Bool -Prompt "Allow manual UPN override in enrollment portal" -Default $false
+    $enrollmentUseWindowsAuthentication = Read-Bool -Prompt "Enable IIS Windows Authentication on enrollment site" -Default $true
+    $enrollmentDisableAnonymousAuthentication = Read-Bool -Prompt "Disable Anonymous Authentication on enrollment site" -Default $true
+
     $config = @{
         ApiZipPath = $apiZipPath
         EnrollmentZipPath = $enrollmentZipPath
@@ -176,6 +229,12 @@ if ($Interactive -or -not $configExists) {
         SqlPassword = $sqlPassword
         MasterKeyBase64 = $masterKeyBase64
         AdminApiKey = $adminApiKey
+        EnrollmentIdpName = $enrollmentIdpName
+        EnrollmentAllowedWindowsDomain = $enrollmentAllowedWindowsDomain
+        EnrollmentDefaultUpnSuffix = $enrollmentDefaultUpnSuffix
+        EnrollmentAllowManualUpn = $enrollmentAllowManualUpn
+        EnrollmentUseWindowsAuthentication = $enrollmentUseWindowsAuthentication
+        EnrollmentDisableAnonymousAuthentication = $enrollmentDisableAnonymousAuthentication
     }
 
     Write-ConfigFile -Path $configFullPath -Config $config
@@ -198,6 +257,13 @@ $siteRoot = $config.SiteRoot
 $apiPath = Join-Path $siteRoot "api"
 $enrollmentPath = Join-Path $siteRoot "enrollment"
 $adminPath = Join-Path $siteRoot "admin"
+
+$enrollmentIdpName = Get-ConfigValue -Config $config -Name "EnrollmentIdpName" -DefaultValue "freeADFSOtp"
+$enrollmentAllowedWindowsDomain = Get-ConfigValue -Config $config -Name "EnrollmentAllowedWindowsDomain" -DefaultValue ""
+$enrollmentDefaultUpnSuffix = Get-ConfigValue -Config $config -Name "EnrollmentDefaultUpnSuffix" -DefaultValue ""
+$enrollmentAllowManualUpn = [bool](Get-ConfigValue -Config $config -Name "EnrollmentAllowManualUpn" -DefaultValue $false)
+$enrollmentUseWindowsAuthentication = [bool](Get-ConfigValue -Config $config -Name "EnrollmentUseWindowsAuthentication" -DefaultValue $true)
+$enrollmentDisableAnonymousAuthentication = [bool](Get-ConfigValue -Config $config -Name "EnrollmentDisableAnonymousAuthentication" -DefaultValue $true)
 
 Invoke-IfNotDryRun -Description "Install IIS features" -Action {
     Ensure-IIS
@@ -230,20 +296,32 @@ $connectionString = Build-ConnectionString -Config $config
 Invoke-IfNotDryRun -Description "Write API and portal appsettings" -Action {
     Update-JsonFile -Path $apiSettingsPath -Update {
         param($json)
-        $json.ConnectionStrings.OtpSql = $connectionString
-        $json.SecretProtection.MasterKey = $config.MasterKeyBase64
-        $json.AdminAuth.ApiKey = $config.AdminApiKey
+        $connectionStrings = Ensure-JsonObjectProperty -Object $json -PropertyName "ConnectionStrings"
+        $secretProtection = Ensure-JsonObjectProperty -Object $json -PropertyName "SecretProtection"
+        $adminAuth = Ensure-JsonObjectProperty -Object $json -PropertyName "AdminAuth"
+
+        $connectionStrings.OtpSql = $connectionString
+        $secretProtection.MasterKey = $config.MasterKeyBase64
+        $adminAuth.ApiKey = $config.AdminApiKey
     }
 
     Update-JsonFile -Path $enrollmentSettingsPath -Update {
         param($json)
-        $json.OtpApi.BaseUrl = $apiBaseUrl
+        $otpApi = Ensure-JsonObjectProperty -Object $json -PropertyName "OtpApi"
+        $enrollment = Ensure-JsonObjectProperty -Object $json -PropertyName "Enrollment"
+
+        $otpApi.BaseUrl = $apiBaseUrl
+        $enrollment.IdpName = $enrollmentIdpName
+        $enrollment.AllowManualUpn = $enrollmentAllowManualUpn
+        $enrollment.AllowedWindowsDomain = $enrollmentAllowedWindowsDomain
+        $enrollment.DefaultUpnSuffix = $enrollmentDefaultUpnSuffix
     }
 
     Update-JsonFile -Path $adminSettingsPath -Update {
         param($json)
-        $json.OtpApi.BaseUrl = $apiBaseUrl
-        $json.OtpApi.AdminApiKey = $config.AdminApiKey
+        $otpApi = Ensure-JsonObjectProperty -Object $json -PropertyName "OtpApi"
+        $otpApi.BaseUrl = $apiBaseUrl
+        $otpApi.AdminApiKey = $config.AdminApiKey
     }
 }
 
@@ -283,6 +361,10 @@ Invoke-IfNotDryRun -Description "Configure IIS sites and app pools" -Action {
         & icacls $site.Path /grant $grantRule /T | Out-Null
         Start-Website -Name $site.Name
     }
+
+    Set-SiteAuthentication -SiteName "freeADFSOtp-Api" -EnableWindowsAuthentication:$false -EnableAnonymousAuthentication:$true
+    Set-SiteAuthentication -SiteName "freeADFSOtp-Admin" -EnableWindowsAuthentication:$false -EnableAnonymousAuthentication:$true
+    Set-SiteAuthentication -SiteName "freeADFSOtp-Enrollment" -EnableWindowsAuthentication:$enrollmentUseWindowsAuthentication -EnableAnonymousAuthentication:(-not $enrollmentDisableAnonymousAuthentication)
 }
 
 Write-Host "Web deployment completed."
