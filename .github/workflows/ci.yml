@@ -40,6 +40,29 @@ jobs:
           $keysDir = Join-Path $PWD "artifacts\keys"
           New-Item -ItemType Directory -Path $keysDir -Force | Out-Null
 
+          function Try-PrepareAdfsWebDll([string]$base64Value, [string]$sourceName) {
+            if ([string]::IsNullOrWhiteSpace($base64Value)) {
+              return $false
+            }
+
+            try {
+              $adfsWebDllPath = Join-Path $keysDir "Microsoft.IdentityServer.Web.dll"
+              [IO.File]::WriteAllBytes($adfsWebDllPath, [Convert]::FromBase64String($base64Value))
+
+              # Validate that the decoded bytes are a real .NET assembly.
+              [void][System.Reflection.AssemblyName]::GetAssemblyName($adfsWebDllPath)
+
+              "BUILD_ADFS_RUNTIME=true" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+              "ADFS_WEB_DLL=$adfsWebDllPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+              Write-Host "AD FS runtime DLL prepared from $sourceName"
+              return $true
+            }
+            catch {
+              Write-Warning "Invalid AD FS DLL content from $sourceName. Runtime build will be skipped."
+              return $false
+            }
+          }
+
           if ('${{ secrets.ADFS_ADAPTER_SNK_BASE64 }}') {
             $snkPath = Join-Path $keysDir "adfs-adapter.snk"
             [IO.File]::WriteAllBytes($snkPath, [Convert]::FromBase64String('${{ secrets.ADFS_ADAPTER_SNK_BASE64 }}'))
@@ -50,19 +73,17 @@ jobs:
             "SIGN_ADAPTER=false" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           }
 
+          $runtimePrepared = $false
+
           if ('${{ vars.ADFS_DLL }}') {
-            $adfsWebDllPath = Join-Path $keysDir "Microsoft.IdentityServer.Web.dll"
-            [IO.File]::WriteAllBytes($adfsWebDllPath, [Convert]::FromBase64String('${{ vars.ADFS_DLL }}'))
-            "BUILD_ADFS_RUNTIME=true" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-            "ADFS_WEB_DLL=$adfsWebDllPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            $runtimePrepared = Try-PrepareAdfsWebDll '${{ vars.ADFS_DLL }}' 'vars.ADFS_DLL'
           }
-          elseif ('${{ secrets.ADFS_WEB_DLL_BASE64 }}') {
-            $adfsWebDllPath = Join-Path $keysDir "Microsoft.IdentityServer.Web.dll"
-            [IO.File]::WriteAllBytes($adfsWebDllPath, [Convert]::FromBase64String('${{ secrets.ADFS_WEB_DLL_BASE64 }}'))
-            "BUILD_ADFS_RUNTIME=true" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-            "ADFS_WEB_DLL=$adfsWebDllPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+          if (-not $runtimePrepared -and '${{ secrets.ADFS_WEB_DLL_BASE64 }}') {
+            $runtimePrepared = Try-PrepareAdfsWebDll '${{ secrets.ADFS_WEB_DLL_BASE64 }}' 'secrets.ADFS_WEB_DLL_BASE64'
           }
-          else {
+
+          if (-not $runtimePrepared) {
             "BUILD_ADFS_RUNTIME=false" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           }
 
