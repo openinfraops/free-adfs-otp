@@ -25,6 +25,7 @@ Notes:
 - The script asks for values and writes a reusable `psd1` config.
 - It auto-generates `provider-config.generated.xml` from that config.
 - It installs adapter from the provided AD FS adapter ZIP (no hardcoded artifacts path).
+- It configures AD FS runtime in SQL direct mode (`SqlConnectionString` + `SecretMasterKeyBase64`).
 
 ## 2) Web/IIS node deployment
 
@@ -55,9 +56,7 @@ What it does:
 
 Use release ZIP files produced by CI/release workflow, for example:
 
-- `freeADFSOtp-vX.Y.Z-api.zip`
-- `freeADFSOtp-vX.Y.Z-enrollment-portal.zip`
-- `freeADFSOtp-vX.Y.Z-admin-portal.zip`
-- `freeADFSOtp-vX.Y.Z-adfs-adapter.zip`
+- `freeADFSOtp-vX.Y.Z-adfs-node-package.zip`
+- `freeADFSOtp-vX.Y.Z-admin-server-package.zip`
 
 No dependency on an `artifacts` folder on target servers.

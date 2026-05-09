@@ -4,7 +4,7 @@ freeADFSOtp est une solution OTP pour AD FS 2019/2022+ avec backend SQL Server. 
 
 ## Fonctionnalités
 
-- OTP TOTP avec validation côté API
+- OTP TOTP avec validation API ou validation SQL directe dans l'adapter AD FS
 - Intégration AD FS pour MFA, avec base runtime pour provider officiel
 - Redirection vers enrôlement si l'utilisateur n'est pas encore enrôlé
 - Génération de QR code pour provisioning mobile
@@ -105,6 +105,8 @@ Entrées principales:
 
 Le runtime AD FS officiel est compilé avec la constante `ADFS_SERVER` et nécessite `Microsoft.IdentityServer.Web.dll` disponible sur serveur AD FS.
 
+En mode SQL direct, l'adapter AD FS valide l'OTP sans dépendre de la disponibilité de l'API Admin/API OTP.
+
 Mode simplifie (scripts interactifs + config reutilisable ferme):
 
 - [deploy/DEPLOY-QUICKSTART.md](deploy/DEPLOY-QUICKSTART.md)
@@ -129,11 +131,13 @@ ZIP générés:
 - `freeADFSOtp-enrollment-portal.zip`
 - `freeADFSOtp-admin-portal.zip`
 - `freeADFSOtp-adfs-adapter.zip`
+- `freeADFSOtp-adfs-node-package.zip`
+- `freeADFSOtp-admin-server-package.zip`
 - `freeADFSOtp-complete.zip`
 
 La génération locale utilise [deploy/package-artifacts.ps1](deploy/package-artifacts.ps1).
 
-Note: la CI compile la solution portable du dépôt. Le runtime AD FS serveur nécessitant `Microsoft.IdentityServer.Web.dll` reste destiné au build sur serveur ou environnement disposant de cette DLL.
+Note: la CI peut signer automatiquement l'assembly adapter si le secret `ADFS_ADAPTER_SNK_BASE64` est configuré. Le build runtime AD FS complet (constante `ADFS_SERVER`) est activable si `ADFS_WEB_DLL_BASE64` est aussi fourni.
 
 ## Release GitHub
 
@@ -160,6 +164,11 @@ Le dépôt contient aujourd'hui une base compilable avec:
 - scripts SQL initiaux
 - pack de déploiement AD FS
 - durcissement initial API
+
+## Compatibilite .NET sur serveurs
+
+- Serveur AD FS: l'adapter cible .NET Framework 4.5 (`net45`), donc .NET 8 n'est pas requis pour l'exécution du provider.
+- Serveur web (API/portails): .NET 8 est requis pour héberger les applications ASP.NET Core.
 
 La solution compile actuellement sans erreur ni warning en Debug.
 

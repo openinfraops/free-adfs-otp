@@ -3,7 +3,7 @@
 ## Prerequis
 
 - .NET SDK 8.x
-- Build tools .NET Framework pour net48 (si compilation adapter)
+- Build tools .NET Framework pour net45 (si compilation adapter)
 - SQL Server 2019+
 
 Si la commande `dotnet` n'est pas reconnue juste apres installation, relancer VS Code/terminal ou utiliser temporairement:

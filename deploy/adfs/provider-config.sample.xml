@@ -1,4 +1,6 @@
 <Config>
-  <ApiBaseUrl>https://otp-api.contoso.local/</ApiBaseUrl>
+  <Mode>SqlDirect</Mode>
+  <SqlConnectionString>Server=sql.contoso.local;Database=FreeAdfsOtp;Integrated Security=True;TrustServerCertificate=True;</SqlConnectionString>
+  <SecretMasterKeyBase64>PUT_BASE64_MASTER_KEY_HERE</SecretMasterKeyBase64>
   <EnrollmentPortalBaseUrl>https://otp-enroll.contoso.local/enroll</EnrollmentPortalBaseUrl>
 </Config>

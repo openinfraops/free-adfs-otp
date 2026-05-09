@@ -84,4 +84,5 @@ Exemple (MFA uniquement en externe):
 
 - L'assembly adapter doit etre strong-name signe avant GAC + register.
 - Tester d'abord sur un serveur AD FS de preproduction.
-- Verifier que l'API OTP est joignable en TLS depuis tous les noeuds AD FS.
+- En mode SQL direct, verifier l'acces SQL depuis tous les noeuds AD FS.
+- Conserver la meme cle `SecretMasterKeyBase64` entre API et adapter AD FS.

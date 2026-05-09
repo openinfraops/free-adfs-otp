@@ -48,7 +48,8 @@ function Write-ConfigFile {
     TypeName = '$(Escape-Psd1String $Config.TypeName)'
     AdapterZipPath = '$(Escape-Psd1String $Config.AdapterZipPath)'
     GacutilPath = '$(Escape-Psd1String $Config.GacutilPath)'
-    ApiBaseUrl = '$(Escape-Psd1String $Config.ApiBaseUrl)'
+    SqlConnectionString = '$(Escape-Psd1String $Config.SqlConnectionString)'
+    SecretMasterKeyBase64 = '$(Escape-Psd1String $Config.SecretMasterKeyBase64)'
     EnrollmentPortalBaseUrl = '$(Escape-Psd1String $Config.EnrollmentPortalBaseUrl)'
     RequireExternalOnly = `$$($Config.RequireExternalOnly)
     ApplyGlobalRule = `$$($Config.ApplyGlobalRule)
@@ -79,14 +80,17 @@ function Read-Bool {
 
 function Build-ProviderConfigXml {
     param(
-        [string]$ApiBaseUrl,
+                [string]$SqlConnectionString,
+                [string]$SecretMasterKeyBase64,
         [string]$EnrollmentPortalBaseUrl,
         [string]$DestinationPath
     )
 
     $xml = @"
 <Config>
-  <ApiBaseUrl>$ApiBaseUrl</ApiBaseUrl>
+    <Mode>SqlDirect</Mode>
+    <SqlConnectionString>$SqlConnectionString</SqlConnectionString>
+    <SecretMasterKeyBase64>$SecretMasterKeyBase64</SecretMasterKeyBase64>
   <EnrollmentPortalBaseUrl>$EnrollmentPortalBaseUrl</EnrollmentPortalBaseUrl>
 </Config>
 "@
@@ -128,9 +132,12 @@ if ($Interactive -or -not $configExists) {
         throw "TypeName is required."
     }
 
-    $adapterZipPath = Read-Host "Adapter ZIP path (e.g. C:\packages\freeADFSOtp-v1.0.0-adfs-adapter.zip)"
+    $adapterZipPath = Read-Host "Adapter ZIP path (e.g. C:\packages\freeADFSOtp-v1.0.0-adfs-node-package.zip)"
     $gacutilPath = Read-Host "gacutil.exe path"; if ([string]::IsNullOrWhiteSpace($gacutilPath)) { $gacutilPath = "C:\Tools\gacutil.exe" }
-    $apiBaseUrl = Read-Host "API base URL"; if ([string]::IsNullOrWhiteSpace($apiBaseUrl)) { throw "ApiBaseUrl is required." }
+    $sqlConnectionString = Read-Host "SQL connection string for OTP validation"
+    if ([string]::IsNullOrWhiteSpace($sqlConnectionString)) { throw "SqlConnectionString is required." }
+    $secretMasterKeyBase64 = Read-Host "Secret master key base64 (same key as API)"
+    if ([string]::IsNullOrWhiteSpace($secretMasterKeyBase64)) { throw "SecretMasterKeyBase64 is required." }
     $enrollmentPortalBaseUrl = Read-Host "Enrollment portal URL"; if ([string]::IsNullOrWhiteSpace($enrollmentPortalBaseUrl)) { throw "EnrollmentPortalBaseUrl is required." }
 
     $requireExternalOnly = Read-Bool -Prompt "Apply MFA rule only for external users" -Default $true
@@ -143,7 +150,8 @@ if ($Interactive -or -not $configExists) {
         TypeName = $typeName
         AdapterZipPath = $adapterZipPath
         GacutilPath = $gacutilPath
-        ApiBaseUrl = $apiBaseUrl
+        SqlConnectionString = $sqlConnectionString
+        SecretMasterKeyBase64 = $secretMasterKeyBase64
         EnrollmentPortalBaseUrl = $enrollmentPortalBaseUrl
         RequireExternalOnly = $requireExternalOnly
         ApplyGlobalRule = $applyGlobalRule
@@ -161,7 +169,8 @@ $providerName = $config.ProviderName
 $typeName = $config.TypeName
 $adapterZipPath = Resolve-RepoPath $config.AdapterZipPath
 $gacutilPath = Resolve-RepoPath $config.GacutilPath
-$apiBaseUrl = $config.ApiBaseUrl
+$sqlConnectionString = $config.SqlConnectionString
+$secretMasterKeyBase64 = $config.SecretMasterKeyBase64
 $enrollmentPortalBaseUrl = $config.EnrollmentPortalBaseUrl
 $requireExternalOnly = [bool]$config.RequireExternalOnly
 $applyGlobalRule = if ($SkipPolicy) { $false } else { [bool]$config.ApplyGlobalRule }
@@ -189,7 +198,7 @@ if (-not $adapterDll) {
 }
 
 $providerConfigPath = Join-Path (Split-Path -Parent $configFullPath) "provider-config.generated.xml"
-Build-ProviderConfigXml -ApiBaseUrl $apiBaseUrl -EnrollmentPortalBaseUrl $enrollmentPortalBaseUrl -DestinationPath $providerConfigPath
+Build-ProviderConfigXml -SqlConnectionString $sqlConnectionString -SecretMasterKeyBase64 $secretMasterKeyBase64 -EnrollmentPortalBaseUrl $enrollmentPortalBaseUrl -DestinationPath $providerConfigPath
 Write-Host "Provider XML generated: $providerConfigPath"
 
 Invoke-IfNotDryRun -Description "Install adapter DLL into GAC" -Action {

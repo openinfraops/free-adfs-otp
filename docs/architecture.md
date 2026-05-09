@@ -15,7 +15,8 @@
 1. AD FS OTP Adapter
 - Plugin AD FS.
 - Verifie et orchestre le challenge OTP.
-- Interroge API OTP (ou acces direct SQL si choix on-prem strict).
+- Mode cible: acces direct SQL pour validation OTP (independant de l'API).
+- Mode fallback: API OTP possible pour compatibilite progressive.
 
 2. OTP Core API
 - Service metier OTP.
@@ -109,7 +110,7 @@ Traçabilite admin:
 
 - SQL HA (Always On / cluster).
 - API OTP stateless, scalable horizontalement.
-- Adapter AD FS resilient: timeout court vers API + fallback explicite.
+- Adapter AD FS resilient: validation locale SQL sans dependance API dans le chemin d'authentification.
 - Supervision:
   - taux succes OTP
   - taux echec OTP

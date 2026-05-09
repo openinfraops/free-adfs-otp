@@ -1,24 +1,35 @@
 #if ADFS_SERVER
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Data;
+using System.Data.SqlClient;
 using System.Net;
 using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.IdentityServer.Web.Authentication.External;
 
 namespace FreeAdfsOtp.AdfsAdapter.AdapterRuntime;
 
 public sealed class FreeAdfsOtpAuthenticationAdapter : IAuthenticationAdapter
 {
-    private OtpAdapterSkeleton _otpClient;
+    private IOtpRuntimeBackend _backend;
     private Uri _apiBaseUrl;
     private Uri _enrollmentPortalBaseUrl;
+    private string _sqlConnectionString;
+    private string _secretMasterKeyBase64;
+    private string _backendMode;
 
     public FreeAdfsOtpAuthenticationAdapter()
     {
         _apiBaseUrl = new Uri("https://localhost:7043");
         _enrollmentPortalBaseUrl = new Uri("https://localhost:7143/enroll");
-        _otpClient = new OtpAdapterSkeleton(_apiBaseUrl);
+        _backendMode = "Api";
+        _sqlConnectionString = string.Empty;
+        _secretMasterKeyBase64 = string.Empty;
+        _backend = new ApiOtpRuntimeBackend(new OtpAdapterSkeleton(_apiBaseUrl));
     }
 
     public IAuthenticationAdapterMetadata Metadata => new FreeAdfsOtpMetadata();
@@ -31,7 +42,7 @@ public sealed class FreeAdfsOtpAuthenticationAdapter : IAuthenticationAdapter
             return FreeAdfsOtpPresentationForm.Error("Impossible de determiner l'utilisateur (UPN).", _enrollmentPortalBaseUrl);
         }
 
-        var isEnrolled = _otpClient.IsUserEnrolledAsync(upn).GetAwaiter().GetResult();
+        var isEnrolled = _backend.IsUserEnrolled(upn);
         if (!isEnrolled)
         {
             var enrollmentUrl = BuildEnrollmentUrl(upn);
@@ -53,11 +64,18 @@ public sealed class FreeAdfsOtpAuthenticationAdapter : IAuthenticationAdapter
             return;
         }
 
-        // Expected configData.Data XML example:
-        // <Config><ApiBaseUrl>https://otp-api.local/</ApiBaseUrl><EnrollmentPortalBaseUrl>https://otp-enroll.local/enroll</EnrollmentPortalBaseUrl></Config>
+        // Supports both API and SQL direct mode.
         var data = configData.Data;
+        var mode = ExtractTagValue(data, "Mode");
         var apiBaseUrl = ExtractTagValue(data, "ApiBaseUrl");
         var enrollmentPortal = ExtractTagValue(data, "EnrollmentPortalBaseUrl");
+        var sqlConnectionString = ExtractTagValue(data, "SqlConnectionString");
+        var secretMasterKeyBase64 = ExtractTagValue(data, "SecretMasterKeyBase64");
+
+        if (!string.IsNullOrWhiteSpace(mode))
+        {
+            _backendMode = mode.Trim();
+        }
 
         if (Uri.TryCreate(apiBaseUrl, UriKind.Absolute, out var parsedApiBaseUrl))
         {
@@ -69,7 +87,24 @@ public sealed class FreeAdfsOtpAuthenticationAdapter : IAuthenticationAdapter
             _enrollmentPortalBaseUrl = parsedEnrollmentPortal;
         }
 
-        _otpClient = new OtpAdapterSkeleton(_apiBaseUrl);
+        if (!string.IsNullOrWhiteSpace(sqlConnectionString))
+        {
+            _sqlConnectionString = sqlConnectionString.Trim();
+        }
+
+        if (!string.IsNullOrWhiteSpace(secretMasterKeyBase64))
+        {
+            _secretMasterKeyBase64 = secretMasterKeyBase64.Trim();
+        }
+
+        if (_backendMode.Equals("SqlDirect", StringComparison.OrdinalIgnoreCase))
+        {
+            _backend = new SqlDirectOtpRuntimeBackend(_sqlConnectionString, _secretMasterKeyBase64);
+        }
+        else
+        {
+            _backend = new ApiOtpRuntimeBackend(new OtpAdapterSkeleton(_apiBaseUrl));
+        }
     }
 
     public void OnAuthenticationPipelineUnload()
@@ -83,7 +118,7 @@ public sealed class FreeAdfsOtpAuthenticationAdapter : IAuthenticationAdapter
 
     public IAdapterPresentation TryEndAuthentication(IAuthenticationContext authContext, IProofData proofData, HttpListenerRequest request, out Claim[] outgoingClaims)
     {
-        outgoingClaims = Array.Empty<Claim>();
+        outgoingClaims = new Claim[0];
 
         var upn = ResolveUpn(authContext, request);
         if (string.IsNullOrWhiteSpace(upn))
@@ -101,12 +136,12 @@ public sealed class FreeAdfsOtpAuthenticationAdapter : IAuthenticationAdapter
         }
 
         var correlationId = Guid.NewGuid();
-        var validated = _otpClient.ValidateOtpAsync(
+        var validated = _backend.ValidateOtp(
             upn,
             otpCode,
             request?.UserHostAddress ?? string.Empty,
             request?.UserAgent ?? string.Empty,
-            correlationId).GetAwaiter().GetResult();
+            correlationId);
 
         if (!validated)
         {
@@ -163,6 +198,431 @@ public sealed class FreeAdfsOtpAuthenticationAdapter : IAuthenticationAdapter
         }
 
         return xml.Substring(start, end - start).Trim();
+    }
+}
+
+internal interface IOtpRuntimeBackend
+{
+    bool IsUserEnrolled(string upn);
+    bool ValidateOtp(string upn, string code, string clientIp, string userAgent, Guid correlationId);
+}
+
+internal sealed class ApiOtpRuntimeBackend : IOtpRuntimeBackend
+{
+    private readonly OtpAdapterSkeleton _client;
+
+    public ApiOtpRuntimeBackend(OtpAdapterSkeleton client)
+    {
+        _client = client;
+    }
+
+    public bool IsUserEnrolled(string upn)
+    {
+        return _client.IsUserEnrolledAsync(upn).GetAwaiter().GetResult();
+    }
+
+    public bool ValidateOtp(string upn, string code, string clientIp, string userAgent, Guid correlationId)
+    {
+        return _client.ValidateOtpAsync(upn, code, clientIp, userAgent, correlationId).GetAwaiter().GetResult();
+    }
+}
+
+internal sealed class SqlDirectOtpRuntimeBackend : IOtpRuntimeBackend
+{
+    private readonly string _connectionString;
+    private readonly byte[] _masterKey;
+    private readonly int _digits = 6;
+    private readonly int _stepSeconds = 30;
+    private readonly int _allowedSkewSteps = 1;
+    private readonly int _maxFailedAttempts = 5;
+    private readonly int _failedWindowMinutes = 10;
+    private readonly int _lockoutMinutes = 15;
+
+    public SqlDirectOtpRuntimeBackend(string connectionString, string secretMasterKeyBase64)
+    {
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            throw new InvalidOperationException("SqlConnectionString must be configured for SqlDirect mode.");
+        }
+
+        if (string.IsNullOrWhiteSpace(secretMasterKeyBase64))
+        {
+            throw new InvalidOperationException("SecretMasterKeyBase64 must be configured for SqlDirect mode.");
+        }
+
+        _connectionString = connectionString;
+        _masterKey = Convert.FromBase64String(secretMasterKeyBase64);
+        if (_masterKey.Length != 32)
+        {
+            throw new InvalidOperationException("SecretMasterKeyBase64 must decode to 32 bytes (AES-256). ");
+        }
+    }
+
+    public bool IsUserEnrolled(string upn)
+    {
+        using (var connection = new SqlConnection(_connectionString))
+        {
+            connection.Open();
+            using (var cmd = new SqlCommand("SELECT TOP 1 IsEnrolled, IsActive FROM otp.Users WHERE UserPrincipalName = @Upn", connection))
+            {
+                cmd.Parameters.AddWithValue("@Upn", upn);
+                using (var reader = cmd.ExecuteReader())
+                {
+                    if (!reader.Read())
+                    {
+                        return false;
+                    }
+
+                    return reader.GetBoolean(0) && reader.GetBoolean(1);
+                }
+            }
+        }
+    }
+
+    public bool ValidateOtp(string upn, string code, string clientIp, string userAgent, Guid correlationId)
+    {
+        var now = DateTime.UtcNow;
+        var record = GetOtpRecord(upn);
+        if (record == null)
+        {
+            LogAttempt(null, upn, null, false, "NOT_ENROLLED", clientIp, userAgent, correlationId);
+            return false;
+        }
+
+        if (!record.IsActive || !record.IsEnrolled || !record.MethodEnabled)
+        {
+            LogAttempt(record.UserId, upn, record.MethodType, false, "NOT_ENROLLED", clientIp, userAgent, correlationId);
+            return false;
+        }
+
+        var lockout = GetOrCreateLockout(record.UserId);
+        if (lockout.LockedUntilUtc.HasValue && lockout.LockedUntilUtc.Value > now)
+        {
+            LogAttempt(record.UserId, upn, record.MethodType, false, "LOCKED", clientIp, userAgent, correlationId);
+            return false;
+        }
+
+        var rawSecret = UnprotectSecret(record.SecretCiphertext, record.SecretKeyVersion);
+        long matchedStep;
+        if (!ValidateTotp(code, rawSecret, now, out matchedStep))
+        {
+            RegisterFailure(record.UserId, lockout, now);
+            LogAttempt(record.UserId, upn, record.MethodType, false, "INVALID_CODE", clientIp, userAgent, correlationId);
+            return false;
+        }
+
+        if (record.LastAcceptedTimeStep.HasValue && matchedStep <= record.LastAcceptedTimeStep.Value)
+        {
+            LogAttempt(record.UserId, upn, record.MethodType, false, "REPLAY", clientIp, userAgent, correlationId);
+            return false;
+        }
+
+        MarkSuccess(record.MethodId, record.UserId, matchedStep);
+        LogAttempt(record.UserId, upn, record.MethodType, true, null, clientIp, userAgent, correlationId);
+        return true;
+    }
+
+    private OtpRecord GetOtpRecord(string upn)
+    {
+        const string sql = @"
+SELECT TOP 1
+    u.UserId,
+    u.IsEnrolled,
+    u.IsActive,
+    m.MethodId,
+    m.MethodType,
+    m.IsEnabled,
+    s.SecretCiphertext,
+    s.SecretKeyVersion,
+    s.LastAcceptedTimeStep
+FROM otp.Users u
+LEFT JOIN otp.OtpMethods m ON m.UserId = u.UserId AND m.IsPrimaryMethod = 1
+LEFT JOIN otp.OtpSecrets s ON s.MethodId = m.MethodId
+WHERE u.UserPrincipalName = @Upn
+ORDER BY m.EnrolledUtc DESC;";
+
+        using (var connection = new SqlConnection(_connectionString))
+        {
+            connection.Open();
+            using (var cmd = new SqlCommand(sql, connection))
+            {
+                cmd.Parameters.AddWithValue("@Upn", upn);
+                using (var reader = cmd.ExecuteReader())
+                {
+                    if (!reader.Read())
+                    {
+                        return null;
+                    }
+
+                    if (reader.IsDBNull(3) || reader.IsDBNull(6))
+                    {
+                        return new OtpRecord
+                        {
+                            UserId = reader.GetGuid(0),
+                            IsEnrolled = reader.GetBoolean(1),
+                            IsActive = reader.GetBoolean(2),
+                            MethodEnabled = false,
+                            MethodType = null
+                        };
+                    }
+
+                    return new OtpRecord
+                    {
+                        UserId = reader.GetGuid(0),
+                        IsEnrolled = reader.GetBoolean(1),
+                        IsActive = reader.GetBoolean(2),
+                        MethodId = reader.GetGuid(3),
+                        MethodType = reader.GetString(4),
+                        MethodEnabled = reader.GetBoolean(5),
+                        SecretCiphertext = (byte[])reader[6],
+                        SecretKeyVersion = reader.GetInt32(7),
+                        LastAcceptedTimeStep = reader.IsDBNull(8) ? (long?)null : reader.GetInt64(8)
+                    };
+                }
+            }
+        }
+    }
+
+    private LockoutState GetOrCreateLockout(Guid userId)
+    {
+        const string readSql = @"
+SELECT TOP 1 FailedAttemptsInWindow, WindowStartUtc, LockedUntilUtc
+FROM otp.UserLockouts
+WHERE UserId = @UserId;";
+
+        using (var connection = new SqlConnection(_connectionString))
+        {
+            connection.Open();
+            using (var readCmd = new SqlCommand(readSql, connection))
+            {
+                readCmd.Parameters.AddWithValue("@UserId", userId);
+                using (var reader = readCmd.ExecuteReader())
+                {
+                    if (reader.Read())
+                    {
+                        return new LockoutState
+                        {
+                            FailedAttemptsInWindow = reader.GetInt32(0),
+                            WindowStartUtc = reader.IsDBNull(1) ? (DateTime?)null : reader.GetDateTime(1),
+                            LockedUntilUtc = reader.IsDBNull(2) ? (DateTime?)null : reader.GetDateTime(2)
+                        };
+                    }
+                }
+            }
+
+            using (var createCmd = new SqlCommand("INSERT INTO otp.UserLockouts (UserId, FailedAttemptsInWindow, UpdatedUtc) VALUES (@UserId, 0, SYSUTCDATETIME())", connection))
+            {
+                createCmd.Parameters.AddWithValue("@UserId", userId);
+                createCmd.ExecuteNonQuery();
+            }
+        }
+
+        return new LockoutState();
+    }
+
+    private void RegisterFailure(Guid userId, LockoutState lockout, DateTime nowUtc)
+    {
+        var attempts = lockout.FailedAttemptsInWindow;
+        var windowStart = lockout.WindowStartUtc;
+        if (!windowStart.HasValue || windowStart.Value.AddMinutes(_failedWindowMinutes) < nowUtc)
+        {
+            attempts = 0;
+            windowStart = nowUtc;
+        }
+
+        attempts += 1;
+        DateTime? lockedUntil = null;
+        if (attempts >= _maxFailedAttempts)
+        {
+            lockedUntil = nowUtc.AddMinutes(_lockoutMinutes);
+            attempts = 0;
+            windowStart = nowUtc;
+        }
+
+        using (var connection = new SqlConnection(_connectionString))
+        {
+            connection.Open();
+            using (var cmd = new SqlCommand(@"
+UPDATE otp.UserLockouts
+SET FailedAttemptsInWindow = @Attempts,
+    WindowStartUtc = @WindowStartUtc,
+    LockedUntilUtc = @LockedUntilUtc,
+    LastFailureUtc = @NowUtc,
+    UpdatedUtc = SYSUTCDATETIME()
+WHERE UserId = @UserId", connection))
+            {
+                cmd.Parameters.AddWithValue("@UserId", userId);
+                cmd.Parameters.AddWithValue("@Attempts", attempts);
+                cmd.Parameters.AddWithValue("@WindowStartUtc", (object)windowStart ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("@LockedUntilUtc", (object)lockedUntil ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("@NowUtc", nowUtc);
+                cmd.ExecuteNonQuery();
+            }
+        }
+    }
+
+    private void MarkSuccess(Guid methodId, Guid userId, long matchedStep)
+    {
+        using (var connection = new SqlConnection(_connectionString))
+        {
+            connection.Open();
+            using (var cmd = new SqlCommand(@"
+UPDATE otp.OtpSecrets SET LastAcceptedTimeStep = @Step WHERE MethodId = @MethodId;
+UPDATE otp.UserLockouts
+SET FailedAttemptsInWindow = 0,
+    WindowStartUtc = NULL,
+    LockedUntilUtc = NULL,
+    LastFailureUtc = NULL,
+    UpdatedUtc = SYSUTCDATETIME()
+WHERE UserId = @UserId;", connection))
+            {
+                cmd.Parameters.AddWithValue("@MethodId", methodId);
+                cmd.Parameters.AddWithValue("@UserId", userId);
+                cmd.Parameters.AddWithValue("@Step", matchedStep);
+                cmd.ExecuteNonQuery();
+            }
+        }
+    }
+
+    private void LogAttempt(Guid? userId, string upn, string methodType, bool isSuccess, string failureReason, string clientIp, string userAgent, Guid correlationId)
+    {
+        using (var connection = new SqlConnection(_connectionString))
+        {
+            connection.Open();
+            using (var cmd = new SqlCommand(@"
+INSERT INTO otp.OtpAttempts (UserId, UserPrincipalName, MethodType, IsSuccess, FailureReason, ClientIp, UserAgent, CorrelationId)
+VALUES (@UserId, @Upn, @MethodType, @IsSuccess, @FailureReason, @ClientIp, @UserAgent, @CorrelationId)", connection))
+            {
+                cmd.Parameters.AddWithValue("@UserId", (object)userId ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("@Upn", upn);
+                cmd.Parameters.AddWithValue("@MethodType", (object)methodType ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("@IsSuccess", isSuccess);
+                cmd.Parameters.AddWithValue("@FailureReason", (object)failureReason ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("@ClientIp", (object)clientIp ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("@UserAgent", (object)userAgent ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("@CorrelationId", correlationId);
+                cmd.ExecuteNonQuery();
+            }
+        }
+    }
+
+    private byte[] UnprotectSecret(byte[] payload, int expectedKeyVersion)
+    {
+        if (payload == null || payload.Length < 21)
+        {
+            throw new CryptographicException("Invalid encrypted secret payload.");
+        }
+
+        var keyVersion = BitConverter.ToInt32(payload, 1);
+        if (keyVersion != expectedKeyVersion)
+        {
+            throw new CryptographicException("Secret key version mismatch.");
+        }
+
+        var iv = new byte[16];
+        Buffer.BlockCopy(payload, 5, iv, 0, 16);
+        var cipher = new byte[payload.Length - 21];
+        Buffer.BlockCopy(payload, 21, cipher, 0, cipher.Length);
+
+        using (var aes = Aes.Create())
+        {
+            aes.Key = _masterKey;
+            aes.IV = iv;
+            using (var decryptor = aes.CreateDecryptor())
+            {
+                return decryptor.TransformFinalBlock(cipher, 0, cipher.Length);
+            }
+        }
+    }
+
+    private bool ValidateTotp(string code, byte[] secret, DateTime nowUtc, out long matchedStep)
+    {
+        matchedStep = -1;
+        if (string.IsNullOrWhiteSpace(code) || code.Length != _digits)
+        {
+            return false;
+        }
+
+        for (var i = 0; i < code.Length; i++)
+        {
+            if (!char.IsDigit(code[i]))
+            {
+                return false;
+            }
+        }
+
+        var unixEpoch = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        var currentStep = (long)(nowUtc.ToUniversalTime().Subtract(unixEpoch).TotalSeconds) / _stepSeconds;
+        for (var skew = -_allowedSkewSteps; skew <= _allowedSkewSteps; skew++)
+        {
+            var step = currentStep + skew;
+            var expected = ComputeTotp(secret, step, _digits);
+            if (FixedTimeEquals(code, expected))
+            {
+                matchedStep = step;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string ComputeTotp(byte[] secret, long step, int digits)
+    {
+        var stepBytes = BitConverter.GetBytes(step);
+        if (BitConverter.IsLittleEndian)
+        {
+            Array.Reverse(stepBytes);
+        }
+
+        byte[] hash;
+        using (var hmac = new HMACSHA1(secret))
+        {
+            hash = hmac.ComputeHash(stepBytes);
+        }
+
+        var offset = hash[hash.Length - 1] & 0x0F;
+        var binaryCode = ((hash[offset] & 0x7F) << 24)
+            | ((hash[offset + 1] & 0xFF) << 16)
+            | ((hash[offset + 2] & 0xFF) << 8)
+            | (hash[offset + 3] & 0xFF);
+
+        var otp = binaryCode % (int)Math.Pow(10, digits);
+        return otp.ToString(CultureInfo.InvariantCulture).PadLeft(digits, '0');
+    }
+
+    private static bool FixedTimeEquals(string left, string right)
+    {
+        var leftBytes = Encoding.UTF8.GetBytes(left);
+        var rightBytes = Encoding.UTF8.GetBytes(right);
+        var length = leftBytes.Length < rightBytes.Length ? leftBytes.Length : rightBytes.Length;
+        var diff = leftBytes.Length ^ rightBytes.Length;
+        for (var i = 0; i < length; i++)
+        {
+            diff |= leftBytes[i] ^ rightBytes[i];
+        }
+
+        return diff == 0;
+    }
+
+    private sealed class OtpRecord
+    {
+        public Guid UserId;
+        public bool IsEnrolled;
+        public bool IsActive;
+        public Guid MethodId;
+        public string MethodType;
+        public bool MethodEnabled;
+        public byte[] SecretCiphertext;
+        public int SecretKeyVersion;
+        public long? LastAcceptedTimeStep;
+    }
+
+    private sealed class LockoutState
+    {
+        public int FailedAttemptsInWindow;
+        public DateTime? WindowStartUtc;
+        public DateTime? LockedUntilUtc;
     }
 }
 
