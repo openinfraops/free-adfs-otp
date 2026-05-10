@@ -37,27 +37,22 @@ jobs:
           $keysDir = Join-Path $PWD "artifacts\keys"
           New-Item -ItemType Directory -Path $keysDir -Force | Out-Null
 
-          function Try-PrepareAdfsWebDll([string]$base64Value, [string]$sourceName) {
-            if ([string]::IsNullOrWhiteSpace($base64Value)) {
-              return $false
+          function Get-RequiredValue([string]$filePath, [string]$prefix) {
+            if (-not (Test-Path $filePath)) {
+              throw "File not found: $filePath"
             }
 
-            try {
-              $adfsWebDllPath = Join-Path $keysDir "Microsoft.IdentityServer.Web.dll"
-              [IO.File]::WriteAllBytes($adfsWebDllPath, [Convert]::FromBase64String($base64Value))
-
-              # Validate that the decoded bytes are a real .NET assembly.
-              [void][System.Reflection.AssemblyName]::GetAssemblyName($adfsWebDllPath)
-
-              "BUILD_ADFS_RUNTIME=true" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-              "ADFS_WEB_DLL=$adfsWebDllPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-              Write-Host "AD FS runtime DLL prepared from $sourceName"
-              return $true
+            $line = (Get-Content -Path $filePath -Raw).Trim()
+            if (-not $line.StartsWith("$prefix=")) {
+              throw "Invalid format in $filePath. Expected prefix '$prefix='"
             }
-            catch {
-              Write-Warning "Invalid AD FS DLL content from $sourceName. Runtime build will be skipped."
-              return $false
+
+            $value = $line.Substring($prefix.Length + 1).Trim()
+            if ([string]::IsNullOrWhiteSpace($value)) {
+              throw "Value for '$prefix' is empty in $filePath"
             }
+
+            return $value
           }
 
           if ('${{ secrets.ADFS_ADAPTER_SNK_BASE64 }}') {
@@ -70,17 +65,29 @@ jobs:
             "SIGN_ADAPTER=false" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           }
 
-          $runtimePrepared = $false
+          try {
+            $base64File = Join-Path $PWD "lib\lib_2025_MISW_B64.txt"
+            $shaFile = Join-Path $PWD "lib\lib_2025_MISW.sha256"
+            $base64Value = Get-RequiredValue $base64File "lib_2025_MISW_B64"
+            $expectedSha = (Get-RequiredValue $shaFile "lib_2025_MISW_SHA256").ToUpperInvariant()
 
-          if ('${{ vars.ADFS_DLL }}') {
-            $runtimePrepared = Try-PrepareAdfsWebDll '${{ vars.ADFS_DLL }}' 'vars.ADFS_DLL'
+            $adfsWebDllPath = Join-Path $keysDir "Microsoft.IdentityServer.Web.dll"
+            [IO.File]::WriteAllBytes($adfsWebDllPath, [Convert]::FromBase64String($base64Value))
+
+            $actualSha = (Get-FileHash -Algorithm SHA256 $adfsWebDllPath).Hash.ToUpperInvariant()
+            if ($actualSha -ne $expectedSha) {
+              throw "SHA256 mismatch for reconstructed AD FS DLL. Expected: $expectedSha Actual: $actualSha"
+            }
+
+            # Validate that the decoded bytes are a real .NET assembly.
+            [void][System.Reflection.AssemblyName]::GetAssemblyName($adfsWebDllPath)
+
+            "BUILD_ADFS_RUNTIME=true" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            "ADFS_WEB_DLL=$adfsWebDllPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            Write-Host "AD FS runtime DLL prepared from lib files with SHA256 verification"
           }
-
-          if (-not $runtimePrepared -and '${{ secrets.ADFS_WEB_DLL_BASE64 }}') {
-            $runtimePrepared = Try-PrepareAdfsWebDll '${{ secrets.ADFS_WEB_DLL_BASE64 }}' 'secrets.ADFS_WEB_DLL_BASE64'
-          }
-
-          if (-not $runtimePrepared) {
+          catch {
+            Write-Warning "Unable to prepare AD FS runtime DLL from lib files. Runtime build will be skipped. $($_.Exception.Message)"
             "BUILD_ADFS_RUNTIME=false" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           }
 

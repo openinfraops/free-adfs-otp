@@ -3,7 +3,7 @@ param(
     [string]$Configuration = "Release",
 
     [Parameter(Mandatory = $false)]
-    [string]$Framework = "net45",
+    [string]$Framework = "net47",
 
     [Parameter(Mandatory = $false)]
     [string]$DotnetPath = "C:\Program Files\dotnet\dotnet.exe",

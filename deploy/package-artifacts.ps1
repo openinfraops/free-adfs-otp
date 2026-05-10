@@ -108,7 +108,7 @@ if ($BuildAdfsRuntime) {
 
 & $DotnetPath @adapterBuildArgs
 
-$adapterOutput = Resolve-RepoPath "src\FreeAdfsOtp.AdfsAdapter\bin\$Configuration\net45"
+$adapterOutput = Resolve-RepoPath "src\FreeAdfsOtp.AdfsAdapter\bin\$Configuration\net47"
 $adapterStaging = Join-Path $stagingRoot "adfs-adapter"
 New-Item -ItemType Directory -Path $adapterStaging -Force | Out-Null
 Copy-Item -Recurse -Force (Join-Path $adapterOutput '*') $adapterStaging

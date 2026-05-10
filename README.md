@@ -178,7 +178,7 @@ Le dépôt contient aujourd'hui une base compilable avec:
 
 ## Compatibilite .NET sur serveurs
 
-- Serveur AD FS: l'adapter cible .NET Framework 4.5 (`net45`), donc .NET 8 n'est pas requis pour l'exécution du provider.
+- Serveur AD FS: l'adapter cible .NET Framework 4.7 (`net47`), donc .NET 8 n'est pas requis pour l'exécution du provider.
 - Serveur web (API/portails): .NET 8 est requis pour héberger les applications ASP.NET Core.
 
 La solution compile actuellement sans erreur ni warning en Debug.

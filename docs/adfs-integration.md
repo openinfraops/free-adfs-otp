@@ -11,7 +11,7 @@ Ce document decrit le mode de deploiement actuellement implemente dans les scrip
 
 Compatibilite runtime adapter:
 
-- target .NET Framework 4.5 (net45)
+- target .NET Framework 4.7 (net47)
 
 ## 2) Provider AD FS
 
