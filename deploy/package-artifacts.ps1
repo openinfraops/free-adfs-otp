@@ -18,7 +18,7 @@ param(
     [string]$AdapterKeyFile = "",
 
     [Parameter(Mandatory = $false)]
-    [switch]$BuildAdfsRuntime = $false,
+    [switch]$BuildAdfsRuntime = $true,
 
     [Parameter(Mandatory = $false)]
     [string]$AdfsWebDll = "",

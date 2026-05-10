@@ -155,6 +155,31 @@ function Get-AdapterTypeName {
         [string]$AdapterClassName = "FreeAdfsOtp.AdfsAdapter.AdapterRuntime.FreeAdfsOtpAuthenticationAdapter"
     )
 
+    $loadedAssembly = [System.Reflection.Assembly]::LoadFrom($AssemblyPath)
+    $adapterType = $loadedAssembly.GetType($AdapterClassName, $false, $false)
+    if (-not $adapterType) {
+        $discoveredTypes = $loadedAssembly.GetTypes() |
+            Where-Object { $_.IsClass -and $_.FullName -like "*AuthenticationAdapter*" } |
+            ForEach-Object { $_.FullName }
+
+        $discoveredText = if ($discoveredTypes -and $discoveredTypes.Count -gt 0) {
+            ($discoveredTypes -join ", ")
+        }
+        else {
+            "none"
+        }
+
+        throw @"
+Expected adapter type '$AdapterClassName' was not found in '$AssemblyPath'.
+Discovered adapter-like types: $discoveredText
+
+This usually means the adapter was built without the ADFS runtime symbol.
+Rebuild using one of the following:
+- .\deploy\adfs\01-build-adapter.ps1 (already sets /p:DefineConstants=ADFS_SERVER)
+- .\deploy\package-artifacts.ps1 -BuildAdfsRuntime
+"@
+    }
+
     $assemblyName = [System.Reflection.AssemblyName]::GetAssemblyName($AssemblyPath)
     $pktBytes = $assemblyName.GetPublicKeyToken()
     $pkt = if ($pktBytes -and $pktBytes.Length -gt 0) {
