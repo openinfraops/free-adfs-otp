@@ -302,10 +302,19 @@ static async Task<bool> TryValidateCsrfAsync(HttpContext httpContext, IAntiforge
 static bool IsSameOriginRequest(HttpContext httpContext)
 {
   var request = httpContext.Request;
-  var expectedScheme = request.Scheme;
-  var expectedAuthority = request.Host.Value;
+  var expectedScheme = GetFirstForwardedValue(request.Headers["X-Forwarded-Proto"].ToString()) ?? request.Scheme;
+  var expectedAuthority = GetFirstForwardedValue(request.Headers["X-Forwarded-Host"].ToString()) ?? request.Host.Value;
 
   var originHeader = request.Headers.Origin.ToString();
+  var refererHeader = request.Headers.Referer.ToString();
+
+  if (string.IsNullOrWhiteSpace(originHeader) && string.IsNullOrWhiteSpace(refererHeader))
+  {
+    // Some clients/proxies omit both headers (e.g., strict referrer policies).
+    // In this case we rely on anti-forgery token validation already enforced on POST handlers.
+    return true;
+  }
+
   if (!string.IsNullOrWhiteSpace(originHeader) &&
       TryBuildAuthority(originHeader, out var originScheme, out var originAuthority))
   {
@@ -313,7 +322,6 @@ static bool IsSameOriginRequest(HttpContext httpContext)
            && originAuthority.Equals(expectedAuthority, StringComparison.OrdinalIgnoreCase);
   }
 
-  var refererHeader = request.Headers.Referer.ToString();
   if (!string.IsNullOrWhiteSpace(refererHeader) &&
       TryBuildAuthority(refererHeader, out var refererScheme, out var refererAuthority))
   {
@@ -322,6 +330,20 @@ static bool IsSameOriginRequest(HttpContext httpContext)
   }
 
   return false;
+}
+
+static string? GetFirstForwardedValue(string? headerValue)
+{
+  if (string.IsNullOrWhiteSpace(headerValue))
+  {
+    return null;
+  }
+
+  var first = headerValue.Split(',', StringSplitOptions.RemoveEmptyEntries)
+    .Select(value => value.Trim())
+    .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+
+  return string.IsNullOrWhiteSpace(first) ? null : first;
 }
 
 static bool TryBuildAuthority(string rawValue, out string scheme, out string authority)
