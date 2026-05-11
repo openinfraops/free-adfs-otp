@@ -99,9 +99,9 @@ WHERE UserId = @UserId;";
                 return new UserLockoutState(
                     reader.GetGuid(reader.GetOrdinal("UserId")),
                     reader.GetInt32(reader.GetOrdinal("FailedAttemptsInWindow")),
-                    reader.IsDBNull(reader.GetOrdinal("WindowStartUtc")) ? null : reader.GetDateTimeOffset(reader.GetOrdinal("WindowStartUtc")),
-                    reader.IsDBNull(reader.GetOrdinal("LockedUntilUtc")) ? null : reader.GetDateTimeOffset(reader.GetOrdinal("LockedUntilUtc")),
-                    reader.IsDBNull(reader.GetOrdinal("LastFailureUtc")) ? null : reader.GetDateTimeOffset(reader.GetOrdinal("LastFailureUtc")));
+                    GetNullableUtcDateTimeOffset(reader, "WindowStartUtc"),
+                    GetNullableUtcDateTimeOffset(reader, "LockedUntilUtc"),
+                    GetNullableUtcDateTimeOffset(reader, "LastFailureUtc"));
             }
         }
 
@@ -339,7 +339,7 @@ WHERE UserPrincipalName = @UserPrincipalName;";
             reader.GetString(reader.GetOrdinal("SecretBase32")),
             reader.GetString(reader.GetOrdinal("IdpName")),
             reader.GetString(reader.GetOrdinal("AccountName")),
-            reader.GetDateTimeOffset(reader.GetOrdinal("ExpiresUtc")));
+            GetUtcDateTimeOffset(reader, "ExpiresUtc"));
     }
 
     public async Task DeletePendingEnrollmentAsync(string userPrincipalName, CancellationToken cancellationToken)
@@ -368,5 +368,38 @@ WHERE ExpiresUtc <= @UtcNow;";
         await using var cmd = new SqlCommand(sql, connection);
         cmd.Parameters.AddWithValue("@UtcNow", utcNow.UtcDateTime);
         return await cmd.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static DateTimeOffset? GetNullableUtcDateTimeOffset(SqlDataReader reader, string columnName)
+    {
+        var ordinal = reader.GetOrdinal(columnName);
+        if (reader.IsDBNull(ordinal))
+        {
+            return null;
+        }
+
+        return GetUtcDateTimeOffset(reader, ordinal, columnName);
+    }
+
+    private static DateTimeOffset GetUtcDateTimeOffset(SqlDataReader reader, string columnName)
+    {
+        var ordinal = reader.GetOrdinal(columnName);
+        return GetUtcDateTimeOffset(reader, ordinal, columnName);
+    }
+
+    private static DateTimeOffset GetUtcDateTimeOffset(SqlDataReader reader, int ordinal, string columnName)
+    {
+        var value = reader.GetValue(ordinal);
+        return value switch
+        {
+            DateTimeOffset dto => dto.ToUniversalTime(),
+            DateTime dt => dt.Kind switch
+            {
+                DateTimeKind.Utc => new DateTimeOffset(dt),
+                DateTimeKind.Local => new DateTimeOffset(dt.ToUniversalTime(), TimeSpan.Zero),
+                _ => new DateTimeOffset(DateTime.SpecifyKind(dt, DateTimeKind.Utc))
+            },
+            _ => throw new InvalidOperationException($"Column '{columnName}' must be DateTime or DateTimeOffset, but was '{value.GetType().FullName}'.")
+        };
     }
 }

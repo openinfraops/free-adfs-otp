@@ -155,12 +155,44 @@ function Get-AdapterTypeName {
         [string]$AdapterClassName = "FreeAdfsOtp.AdfsAdapter.AdapterRuntime.FreeAdfsOtpAuthenticationAdapter"
     )
 
+    $assemblyDirectory = Split-Path -Parent $AssemblyPath
+    $adfsDllCandidates = @(
+        (Join-Path $assemblyDirectory "Microsoft.IdentityServer.Web.dll"),
+        (Join-Path $env:windir "ADFS\Microsoft.IdentityServer.Web.dll")
+    )
+
+    foreach ($candidate in $adfsDllCandidates) {
+        if (Test-Path $candidate) {
+            try {
+                [void][System.Reflection.Assembly]::LoadFrom($candidate)
+                break
+            }
+            catch {
+                Write-Warning "Unable to preload dependency '$candidate': $($_.Exception.Message)"
+            }
+        }
+    }
+
     $loadedAssembly = [System.Reflection.Assembly]::LoadFrom($AssemblyPath)
     $adapterType = $loadedAssembly.GetType($AdapterClassName, $false, $false)
     if (-not $adapterType) {
-        $discoveredTypes = $loadedAssembly.GetTypes() |
-            Where-Object { $_.IsClass -and $_.FullName -like "*AuthenticationAdapter*" } |
-            ForEach-Object { $_.FullName }
+        $discoveredTypes = @()
+        $loaderExceptionMessages = @()
+
+        try {
+            $discoveredTypes = $loadedAssembly.GetTypes() |
+                Where-Object { $_.IsClass -and $_.FullName -like "*AuthenticationAdapter*" } |
+                ForEach-Object { $_.FullName }
+        }
+        catch [System.Reflection.ReflectionTypeLoadException] {
+            $discoveredTypes = $_.Exception.Types |
+                Where-Object { $null -ne $_ -and $_.IsClass -and $_.FullName -like "*AuthenticationAdapter*" } |
+                ForEach-Object { $_.FullName }
+
+            $loaderExceptionMessages = $_.Exception.LoaderExceptions |
+                Where-Object { $null -ne $_ } |
+                ForEach-Object { $_.Message }
+        }
 
         $discoveredText = if ($discoveredTypes -and $discoveredTypes.Count -gt 0) {
             ($discoveredTypes -join ", ")
@@ -169,9 +201,21 @@ function Get-AdapterTypeName {
             "none"
         }
 
+    $loaderExceptionText = if ($loaderExceptionMessages -and $loaderExceptionMessages.Count -gt 0) {
+@"
+
+Loader exceptions:
+- $($loaderExceptionMessages -join "`n- ")
+"@
+    }
+    else {
+        ""
+    }
+
         throw @"
 Expected adapter type '$AdapterClassName' was not found in '$AssemblyPath'.
 Discovered adapter-like types: $discoveredText
+$loaderExceptionText
 
 This usually means the adapter was built without the ADFS runtime symbol.
 Rebuild using one of the following:

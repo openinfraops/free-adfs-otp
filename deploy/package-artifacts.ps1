@@ -24,7 +24,13 @@ param(
     [string]$AdfsWebDll = "",
 
     [Parameter(Mandatory = $false)]
-    [switch]$CreateBundle = $true
+    [switch]$CreateBundle = $true,
+
+    [Parameter(Mandatory = $false)]
+    [string]$AdapterVersion = "",
+
+    [Parameter(Mandatory = $false)]
+    [string]$AdapterVersionFile = ".\build\adfs-adapter.version"
 )
 
 $ErrorActionPreference = "Stop"
@@ -67,6 +73,30 @@ function New-ZipFromDirectory {
     Compress-Archive -Path (Join-Path $SourceDirectory '*') -DestinationPath $ZipFilePath -CompressionLevel Optimal
 }
 
+function Resolve-AdapterVersion {
+    param(
+        [string]$ExplicitVersion,
+        [string]$VersionFilePath
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($ExplicitVersion)) {
+        $version = $ExplicitVersion.Trim()
+    }
+    else {
+        if (-not (Test-Path $VersionFilePath)) {
+            throw "Adapter version file not found: $VersionFilePath"
+        }
+
+        $version = (Get-Content -Path $VersionFilePath -Raw).Trim()
+    }
+
+    if ($version -notmatch '^\d+\.\d+\.\d+$') {
+        throw "Invalid adapter version '$version'. Expected format: Major.Minor.Patch (example: 1.0.0)."
+    }
+
+    return $version
+}
+
 $apiProject = Resolve-RepoPath "src\FreeAdfsOtp.Api\FreeAdfsOtp.Api.csproj"
 $enrollmentProject = Resolve-RepoPath "src\FreeAdfsOtp.EnrollmentPortal\FreeAdfsOtp.EnrollmentPortal.csproj"
 $adminProject = Resolve-RepoPath "src\FreeAdfsOtp.AdminPortal\FreeAdfsOtp.AdminPortal.csproj"
@@ -77,6 +107,9 @@ $docsPath = Resolve-RepoPath "docs"
 $sqlPath = Resolve-RepoPath "sql"
 
 $outputRootFull = Resolve-RepoPath $OutputRoot
+$adapterVersionFileFull = Resolve-RepoPath $AdapterVersionFile
+$resolvedAdapterVersion = Resolve-AdapterVersion -ExplicitVersion $AdapterVersion -VersionFilePath $adapterVersionFileFull
+$adapterAssemblyVersion = "$resolvedAdapterVersion.0"
 $stagingRoot = Join-Path $outputRootFull "staging"
 $zipRoot = Join-Path $outputRootFull "zip"
 $bundleRoot = Join-Path $stagingRoot "bundle-complete"
@@ -105,7 +138,11 @@ $adapterBuildArgs = @(
     "build",
     $adapterProject,
     "-c", $Configuration,
-    "--no-restore"
+    "--no-restore",
+    "-p:Version=$resolvedAdapterVersion",
+    "-p:InformationalVersion=$resolvedAdapterVersion",
+    "-p:AssemblyVersion=$adapterAssemblyVersion",
+    "-p:FileVersion=$adapterAssemblyVersion"
 )
 
 if ($SignAdapter -and -not [string]::IsNullOrWhiteSpace($AdapterKeyFile)) {
@@ -130,6 +167,7 @@ if (-not (Test-Path $adapterDll)) {
 
 $adapterDllInfo = Get-Item $adapterDll
 Write-Host "AD FS adapter DLL built: $($adapterDllInfo.FullName) ($($adapterDllInfo.Length) bytes)"
+Write-Host "AD FS adapter version applied: $resolvedAdapterVersion"
 
 if ($BuildAdfsRuntime -and $adapterDllInfo.Length -lt 20000) {
     throw "ADFS runtime build was requested, but adapter DLL appears too small ($($adapterDllInfo.Length) bytes). Failing package generation to avoid publishing a skeleton build."

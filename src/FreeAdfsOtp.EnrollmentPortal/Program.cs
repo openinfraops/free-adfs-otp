@@ -5,12 +5,23 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authentication.Negotiate;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Server.IISIntegration;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services
+var isHostedByIis = !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ASPNETCORE_IIS_PHYSICAL_PATH"));
+var forceNegotiateHandler = builder.Configuration.GetValue("Authentication:ForceNegotiateHandler", false);
+
+if (isHostedByIis && !forceNegotiateHandler)
+{
+  builder.Services.AddAuthentication(IISDefaults.AuthenticationScheme);
+}
+else
+{
+  builder.Services
     .AddAuthentication(NegotiateDefaults.AuthenticationScheme)
     .AddNegotiate();
+}
 
 builder.Services.AddAuthorization(options =>
 {

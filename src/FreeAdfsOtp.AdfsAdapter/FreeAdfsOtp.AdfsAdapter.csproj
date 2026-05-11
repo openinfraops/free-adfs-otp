@@ -2,7 +2,7 @@
   <PropertyGroup>
     <TargetFramework>net47</TargetFramework>
     <Nullable>disable</Nullable>
-    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
     <SignAssembly Condition="'$(SignAdapterAssembly)' == 'true'">true</SignAssembly>
     <AssemblyOriginatorKeyFile Condition="'$(AdapterKeyFile)' != ''">$(AdapterKeyFile)</AssemblyOriginatorKeyFile>
   </PropertyGroup>

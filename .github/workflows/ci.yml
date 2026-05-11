@@ -32,7 +32,15 @@ jobs:
         run: dotnet restore .\freeADFSOtp.sln --configfile .\NuGet.Config
 
       - name: Build solution
-        run: dotnet build .\freeADFSOtp.sln -c Release --no-restore
+        shell: pwsh
+        run: |
+          $adapterVersion = (Get-Content -Path .\build\adfs-adapter.version -Raw).Trim()
+          if ($adapterVersion -notmatch '^\d+\.\d+\.\d+$') {
+            throw "Invalid adapter version '$adapterVersion' in build/adfs-adapter.version"
+          }
+
+          echo "ADAPTER_VERSION=$adapterVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          dotnet build .\freeADFSOtp.sln -c Release --no-restore -p:Version=$adapterVersion
 
       - name: Prepare optional adapter signing/runtime inputs
         shell: pwsh
@@ -124,6 +132,7 @@ jobs:
             Configuration = 'Release'
             DotnetPath = 'dotnet'
             BuildAdfsRuntime = ($env:BUILD_ADFS_RUNTIME -eq 'true')
+            AdapterVersion = $env:ADAPTER_VERSION
           }
 
           if ($env:SIGN_ADAPTER -eq 'true') {
