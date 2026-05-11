@@ -123,6 +123,7 @@ if (-not (Test-Path $enrollmentPath)) {
 
 $apiBaseUrl = "https://$($config.ApiHost)"
 $enrollmentIdpName = Get-ConfigValue -Config $config -Name "EnrollmentIdpName" -DefaultValue "freeADFSOtp"
+$enrollmentPhoneIssuerName = Get-ConfigValue -Config $config -Name "EnrollmentPhoneIssuerName" -DefaultValue $enrollmentIdpName
 $enrollmentAllowedWindowsDomain = Get-ConfigValue -Config $config -Name "EnrollmentAllowedWindowsDomain" -DefaultValue ""
 $enrollmentDefaultUpnSuffix = Get-ConfigValue -Config $config -Name "EnrollmentDefaultUpnSuffix" -DefaultValue ""
 $enrollmentAllowManualUpn = [bool](Get-ConfigValue -Config $config -Name "EnrollmentAllowManualUpn" -DefaultValue $false)
@@ -165,6 +166,7 @@ Invoke-IfNotDryRun -Description "Apply enrollment appsettings security configura
 
         $otpApi.BaseUrl = $apiBaseUrl
         $enrollment.IdpName = $enrollmentIdpName
+    $enrollment.PhoneIssuerName = $enrollmentPhoneIssuerName
         $enrollment.AllowManualUpn = $enrollmentAllowManualUpn
         $enrollment.AllowedWindowsDomain = $enrollmentAllowedWindowsDomain
         $enrollment.DefaultUpnSuffix = $enrollmentDefaultUpnSuffix

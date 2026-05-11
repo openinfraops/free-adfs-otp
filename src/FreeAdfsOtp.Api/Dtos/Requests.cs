@@ -8,6 +8,6 @@ public sealed record ValidateOtpDto(
     Guid? CorrelationId,
     Guid? AdfsActivityId);
 
-public sealed record EnrollmentStartDto(string UserPrincipalName, string IdpName, string? AccountName);
+public sealed record EnrollmentStartDto(string UserPrincipalName, string IdpName, string? IssuerName, string? AccountName);
 public sealed record EnrollmentVerifyDto(string UserPrincipalName, string Code);
 public sealed record AdminActionDto(string AdminUpn, string Reason);

@@ -7,6 +7,12 @@ namespace FreeAdfsOtp.AdfsAdapter;
 
 public sealed class OtpAdapterSkeleton
 {
+    public sealed class ValidationResponse
+    {
+        public bool IsSuccess { get; set; }
+        public bool IsLocked { get; set; }
+    }
+
     private readonly HttpClient _httpClient;
     private readonly Uri _apiBaseUrl;
 
@@ -33,7 +39,7 @@ public sealed class OtpAdapterSkeleton
         return payload.IndexOf("\"isEnrolled\":true", StringComparison.OrdinalIgnoreCase) >= 0;
     }
 
-    public async Task<bool> ValidateOtpAsync(string upn, string code, string clientIp, string userAgent, Guid? correlationId)
+    public async Task<ValidationResponse> ValidateOtpAsync(string upn, string code, string clientIp, string userAgent, Guid? correlationId)
     {
         var url = new Uri(_apiBaseUrl, "/otp/validate");
         var json = "{" +
@@ -50,10 +56,23 @@ public sealed class OtpAdapterSkeleton
 
         if (!response.IsSuccessStatusCode)
         {
-            return false;
+            return new ValidationResponse { IsSuccess = false, IsLocked = false };
         }
 
-        return payload.IndexOf("\"isSuccess\":true", StringComparison.OrdinalIgnoreCase) >= 0;
+        var isSuccess = payload.IndexOf("\"isSuccess\":true", StringComparison.OrdinalIgnoreCase) >= 0;
+        if (isSuccess)
+        {
+            return new ValidationResponse { IsSuccess = true, IsLocked = false };
+        }
+
+        var isLocked = payload.IndexOf("\"failureReason\":2", StringComparison.OrdinalIgnoreCase) >= 0
+            || payload.IndexOf("\"failureReason\":\"Locked\"", StringComparison.OrdinalIgnoreCase) >= 0;
+
+        return new ValidationResponse
+        {
+            IsSuccess = false,
+            IsLocked = isLocked
+        };
     }
 
     private static string EscapeJson(string value)

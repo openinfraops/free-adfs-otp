@@ -257,7 +257,14 @@ enroll.MapPost("/start", async (HttpContext ctx, IHttpClientFactory factory, ICo
     }
 
     var upn = resolve.Upn!;
-    var idpName = config["Enrollment:IdpName"] ?? "freeADFSOtp";
+  var idpName = config["Enrollment:IdpName"] ?? "freeADFSOtp";
+  var phoneIssuerName = config["Enrollment:PhoneIssuerName"];
+  if (string.IsNullOrWhiteSpace(phoneIssuerName))
+  {
+    phoneIssuerName = idpName;
+  }
+
+  phoneIssuerName = phoneIssuerName.Trim();
     var accountName = form["accountName"].ToString();
     if (string.IsNullOrWhiteSpace(accountName))
     {
@@ -265,7 +272,7 @@ enroll.MapPost("/start", async (HttpContext ctx, IHttpClientFactory factory, ICo
     }
 
     var client = factory.CreateClient("otp-api");
-    var response = await client.PostAsJsonAsync("/enrollment/start", new { userPrincipalName = upn, idpName, accountName });
+  var response = await client.PostAsJsonAsync("/enrollment/start", new { userPrincipalName = upn, idpName, issuerName = phoneIssuerName, accountName });
     var payload = await response.Content.ReadAsStringAsync();
 
     if (!response.IsSuccessStatusCode)

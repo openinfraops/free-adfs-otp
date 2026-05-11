@@ -157,25 +157,31 @@ public sealed class FreeAdfsOtpAuthenticationAdapter : IAuthenticationAdapter
 
         if (string.IsNullOrWhiteSpace(otpCode))
         {
-            return FreeAdfsOtpPresentationForm.Error("Code OTP requis.", BuildEnrollmentUrl(upn));
+            return FreeAdfsOtpPresentationForm.Challenge(upn, BuildEnrollmentUrl(upn), "Code OTP requis.");
         }
 
         var correlationId = Guid.NewGuid();
-        var validated = _backend.ValidateOtp(
+        var validation = _backend.ValidateOtp(
             upn,
             otpCode,
             request?.UserHostAddress ?? string.Empty,
             request?.UserAgent ?? string.Empty,
             correlationId);
 
-        if (!validated)
+        if (!validation.IsSuccess)
         {
-            return FreeAdfsOtpPresentationForm.Error("Code OTP invalide ou expiré.", BuildEnrollmentUrl(upn));
+            if (validation.IsLocked)
+            {
+                return FreeAdfsOtpPresentationForm.Error("Les essais OTP ne sont plus disponibles pour ce compte. Merci de contacter un administrateur.", BuildEnrollmentUrl(upn));
+            }
+
+            return FreeAdfsOtpPresentationForm.Challenge(upn, BuildEnrollmentUrl(upn), "Code OTP invalide ou expiré.");
         }
 
         outgoingClaims = new[]
         {
-            new Claim(AdfsOtpAdapterConstants.AuthenticationMethodClaimType, AdfsOtpAdapterConstants.AuthenticationMethodUri)
+            new Claim(AdfsOtpAdapterConstants.AuthenticationMethodClaimType, AdfsOtpAdapterConstants.AuthenticationMethodUri),
+            new Claim(AdfsOtpAdapterConstants.AuthenticationMethodClaimType, AdfsOtpAdapterConstants.MultipleAuthnMethodUri)
         };
 
         return null;
@@ -304,7 +310,13 @@ public sealed class FreeAdfsOtpAuthenticationAdapter : IAuthenticationAdapter
 internal interface IOtpRuntimeBackend
 {
     bool IsUserEnrolled(string upn);
-    bool ValidateOtp(string upn, string code, string clientIp, string userAgent, Guid correlationId);
+    OtpRuntimeValidationResult ValidateOtp(string upn, string code, string clientIp, string userAgent, Guid correlationId);
+}
+
+internal sealed class OtpRuntimeValidationResult
+{
+    public bool IsSuccess { get; set; }
+    public bool IsLocked { get; set; }
 }
 
 internal sealed class ApiOtpRuntimeBackend : IOtpRuntimeBackend
@@ -321,9 +333,14 @@ internal sealed class ApiOtpRuntimeBackend : IOtpRuntimeBackend
         return _client.IsUserEnrolledAsync(upn).GetAwaiter().GetResult();
     }
 
-    public bool ValidateOtp(string upn, string code, string clientIp, string userAgent, Guid correlationId)
+    public OtpRuntimeValidationResult ValidateOtp(string upn, string code, string clientIp, string userAgent, Guid correlationId)
     {
-        return _client.ValidateOtpAsync(upn, code, clientIp, userAgent, correlationId).GetAwaiter().GetResult();
+        var result = _client.ValidateOtpAsync(upn, code, clientIp, userAgent, correlationId).GetAwaiter().GetResult();
+        return new OtpRuntimeValidationResult
+        {
+            IsSuccess = result.IsSuccess,
+            IsLocked = result.IsLocked
+        };
     }
 }
 
@@ -379,27 +396,27 @@ internal sealed class SqlDirectOtpRuntimeBackend : IOtpRuntimeBackend
         }
     }
 
-    public bool ValidateOtp(string upn, string code, string clientIp, string userAgent, Guid correlationId)
+    public OtpRuntimeValidationResult ValidateOtp(string upn, string code, string clientIp, string userAgent, Guid correlationId)
     {
         var now = DateTime.UtcNow;
         var record = GetOtpRecord(upn);
         if (record == null)
         {
             LogAttempt(null, upn, null, false, "NOT_ENROLLED", clientIp, userAgent, correlationId);
-            return false;
+            return new OtpRuntimeValidationResult { IsSuccess = false, IsLocked = false };
         }
 
         if (!record.IsActive || !record.IsEnrolled || !record.MethodEnabled)
         {
             LogAttempt(record.UserId, upn, record.MethodType, false, "NOT_ENROLLED", clientIp, userAgent, correlationId);
-            return false;
+            return new OtpRuntimeValidationResult { IsSuccess = false, IsLocked = false };
         }
 
         var lockout = GetOrCreateLockout(record.UserId);
         if (lockout.LockedUntilUtc.HasValue && lockout.LockedUntilUtc.Value > now)
         {
             LogAttempt(record.UserId, upn, record.MethodType, false, "LOCKED", clientIp, userAgent, correlationId);
-            return false;
+            return new OtpRuntimeValidationResult { IsSuccess = false, IsLocked = true };
         }
 
         var rawSecret = UnprotectSecret(record.SecretCiphertext, record.SecretKeyVersion);
@@ -408,18 +425,18 @@ internal sealed class SqlDirectOtpRuntimeBackend : IOtpRuntimeBackend
         {
             RegisterFailure(record.UserId, lockout, now);
             LogAttempt(record.UserId, upn, record.MethodType, false, "INVALID_CODE", clientIp, userAgent, correlationId);
-            return false;
+            return new OtpRuntimeValidationResult { IsSuccess = false, IsLocked = false };
         }
 
         if (record.LastAcceptedTimeStep.HasValue && matchedStep <= record.LastAcceptedTimeStep.Value)
         {
             LogAttempt(record.UserId, upn, record.MethodType, false, "REPLAY", clientIp, userAgent, correlationId);
-            return false;
+            return new OtpRuntimeValidationResult { IsSuccess = false, IsLocked = false };
         }
 
         MarkSuccess(record.MethodId, record.UserId, matchedStep);
         LogAttempt(record.UserId, upn, record.MethodType, true, null, clientIp, userAgent, correlationId);
-        return true;
+        return new OtpRuntimeValidationResult { IsSuccess = true, IsLocked = false };
     }
 
     private OtpRecord GetOtpRecord(string upn)
@@ -730,7 +747,11 @@ public sealed class FreeAdfsOtpMetadata : IAuthenticationAdapterMetadata
 {
     public string AdminName => "freeADFSOtp";
 
-    public string[] AuthenticationMethods => new[] { AdfsOtpAdapterConstants.AuthenticationMethodUri };
+    public string[] AuthenticationMethods => new[]
+    {
+        AdfsOtpAdapterConstants.AuthenticationMethodUri,
+        AdfsOtpAdapterConstants.MultipleAuthnMethodUri
+    };
 
     public int[] AvailableLcids => new[] { new CultureInfo("en-US").LCID, new CultureInfo("fr-FR").LCID };
 
@@ -766,9 +787,9 @@ public sealed class FreeAdfsOtpPresentationForm : IAdapterPresentationForm
         _upn = upn;
     }
 
-    public static FreeAdfsOtpPresentationForm Challenge(string upn, string enrollmentUrl)
+    public static FreeAdfsOtpPresentationForm Challenge(string upn, string enrollmentUrl, string message = "Saisissez votre code OTP.")
     {
-        return new FreeAdfsOtpPresentationForm("Saisissez votre code OTP.", enrollmentUrl, true, upn);
+        return new FreeAdfsOtpPresentationForm(message, enrollmentUrl, true, upn);
     }
 
     public static FreeAdfsOtpPresentationForm NotEnrolled(string upn, string enrollmentUrl)

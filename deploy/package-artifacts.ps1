@@ -30,7 +30,13 @@ param(
     [string]$AdapterVersion = "",
 
     [Parameter(Mandatory = $false)]
-    [string]$AdapterVersionFile = ".\build\adfs-adapter.version"
+    [string]$AdapterVersionFile = ".\build\adfs-adapter.version",
+
+    [Parameter(Mandatory = $false)]
+    [string]$WebVersion = "",
+
+    [Parameter(Mandatory = $false)]
+    [string]$WebVersionFile = ".\build\web.version"
 )
 
 $ErrorActionPreference = "Stop"
@@ -110,6 +116,9 @@ $outputRootFull = Resolve-RepoPath $OutputRoot
 $adapterVersionFileFull = Resolve-RepoPath $AdapterVersionFile
 $resolvedAdapterVersion = Resolve-AdapterVersion -ExplicitVersion $AdapterVersion -VersionFilePath $adapterVersionFileFull
 $adapterAssemblyVersion = "$resolvedAdapterVersion.0"
+$webVersionFileFull = Resolve-RepoPath $WebVersionFile
+$resolvedWebVersion = Resolve-AdapterVersion -ExplicitVersion $WebVersion -VersionFilePath $webVersionFileFull
+$webAssemblyVersion = "$resolvedWebVersion.0"
 $stagingRoot = Join-Path $outputRootFull "staging"
 $zipRoot = Join-Path $outputRootFull "zip"
 $bundleRoot = Join-Path $stagingRoot "bundle-complete"
@@ -118,13 +127,13 @@ Reset-Directory -Path $stagingRoot
 Reset-Directory -Path $zipRoot
 
 Write-Host "Publishing API..."
-& $DotnetPath publish $apiProject -c $Configuration -o (Join-Path $stagingRoot "api")
+& $DotnetPath publish $apiProject -c $Configuration -o (Join-Path $stagingRoot "api") -p:Version=$resolvedWebVersion -p:InformationalVersion=$resolvedWebVersion -p:AssemblyVersion=$webAssemblyVersion -p:FileVersion=$webAssemblyVersion
 
 Write-Host "Publishing enrollment portal..."
-& $DotnetPath publish $enrollmentProject -c $Configuration -o (Join-Path $stagingRoot "enrollment-portal")
+& $DotnetPath publish $enrollmentProject -c $Configuration -o (Join-Path $stagingRoot "enrollment-portal") -p:Version=$resolvedWebVersion -p:InformationalVersion=$resolvedWebVersion -p:AssemblyVersion=$webAssemblyVersion -p:FileVersion=$webAssemblyVersion
 
 Write-Host "Publishing admin portal..."
-& $DotnetPath publish $adminProject -c $Configuration -o (Join-Path $stagingRoot "admin-portal")
+& $DotnetPath publish $adminProject -c $Configuration -o (Join-Path $stagingRoot "admin-portal") -p:Version=$resolvedWebVersion -p:InformationalVersion=$resolvedWebVersion -p:AssemblyVersion=$webAssemblyVersion -p:FileVersion=$webAssemblyVersion
 
 Write-Host "Building AD FS adapter..."
 $adapterOutput = Resolve-RepoPath "src\FreeAdfsOtp.AdfsAdapter\bin\$Configuration\net47"
@@ -168,6 +177,7 @@ if (-not (Test-Path $adapterDll)) {
 $adapterDllInfo = Get-Item $adapterDll
 Write-Host "AD FS adapter DLL built: $($adapterDllInfo.FullName) ($($adapterDllInfo.Length) bytes)"
 Write-Host "AD FS adapter version applied: $resolvedAdapterVersion"
+Write-Host "Web components version applied: $resolvedWebVersion"
 
 if ($BuildAdfsRuntime -and $adapterDllInfo.Length -lt 20000) {
     throw "ADFS runtime build was requested, but adapter DLL appears too small ($($adapterDllInfo.Length) bytes). Failing package generation to avoid publishing a skeleton build."

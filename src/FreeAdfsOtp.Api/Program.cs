@@ -120,15 +120,16 @@ app.MapPost("/enrollment/start", async (
     var secretBytes = RandomNumberGenerator.GetBytes(20);
     var secretBase32 = Base32Encoding.ToBase32(secretBytes);
     var accountName = string.IsNullOrWhiteSpace(dto.AccountName) ? dto.UserPrincipalName : dto.AccountName.Trim();
+    var issuerName = string.IsNullOrWhiteSpace(dto.IssuerName) ? dto.IdpName.Trim() : dto.IssuerName.Trim();
     var pendingTtlMinutes = configuration.GetValue<int?>("Enrollment:PendingTtlMinutes") ?? 10;
     var expiresUtc = clock.UtcNow.AddMinutes(pendingTtlMinutes);
     await repository.SavePendingEnrollmentAsync(
-        new PendingEnrollmentState(dto.UserPrincipalName, secretBase32, dto.IdpName.Trim(), accountName, expiresUtc),
+        new PendingEnrollmentState(dto.UserPrincipalName, secretBase32, issuerName, accountName, expiresUtc),
         ct);
 
-    var phoneLabel = $"{dto.IdpName.Trim()}:{accountName}";
+    var phoneLabel = $"{issuerName}:{accountName}";
     var escapedLabel = Uri.EscapeDataString(phoneLabel);
-    var escapedIssuer = Uri.EscapeDataString(dto.IdpName.Trim());
+    var escapedIssuer = Uri.EscapeDataString(issuerName);
     var otpAuthUri = $"otpauth://totp/{escapedLabel}?secret={secretBase32}&issuer={escapedIssuer}&algorithm=SHA1&digits=6&period=30";
 
     using var qrGenerator = new QRCodeGenerator();
@@ -141,6 +142,7 @@ app.MapPost("/enrollment/start", async (
     {
         dto.UserPrincipalName,
         idpName = dto.IdpName.Trim(),
+    issuerName,
         accountName,
         phoneLabel,
         secretBase32,

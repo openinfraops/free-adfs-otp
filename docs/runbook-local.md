@@ -65,6 +65,7 @@ Configuration recommandee du portail d'enrôlement:
 
 - [src/FreeAdfsOtp.EnrollmentPortal/appsettings.json](../src/FreeAdfsOtp.EnrollmentPortal/appsettings.json)
    - `Enrollment:IdpName`: identifiant fournisseur affiche dans le label OTP
+   - `Enrollment:PhoneIssuerName`: nom affiche dans l'application OTP (issuer). Si vide, `Enrollment:IdpName` est utilise.
    - `Enrollment:AllowedWindowsDomain`: nom NetBIOS autorise (ex: `CONTOSO`)
    - `Enrollment:DefaultUpnSuffix`: suffixe UPN pour convertir `DOMAINE\utilisateur` en `utilisateur@domaine`
    - `Enrollment:AllowManualUpn`: laisser `false` en production
