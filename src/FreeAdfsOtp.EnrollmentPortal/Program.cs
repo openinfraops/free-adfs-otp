@@ -64,6 +64,14 @@ enroll.MapGet("", async (HttpContext ctx, IConfiguration config, IHttpClientFact
     var resolve = ResolveUpn(ctx.User, config, null);
     var identityName = Encode(ctx.User.Identity?.Name ?? "inconnu");
     var accountName = Encode(resolve.Upn ?? string.Empty);
+  var configuredIdpName = (config["Enrollment:IdpName"] ?? "freeADFSOtp").Trim();
+  var configuredPhoneIssuerName = config["Enrollment:PhoneIssuerName"];
+  if (string.IsNullOrWhiteSpace(configuredPhoneIssuerName))
+  {
+    configuredPhoneIssuerName = configuredIdpName;
+  }
+
+  var issuerName = Encode(configuredPhoneIssuerName.Trim());
 
     var isAlreadyEnrolled = false;
     if (resolve.Ok)
@@ -95,6 +103,8 @@ enroll.MapGet("", async (HttpContext ctx, IConfiguration config, IHttpClientFact
         <form method="post" action="/enroll/start">
           <label>Compte utilisateur</label>
           <input class="readonly" name="userPrincipalName" value="{{accountName}}" readonly />
+          <label>Nom de l'emetteur (Issuer)</label>
+          <input name="issuerName" value="{{issuerName}}" placeholder="MonEntreprise" />
           <label>Libelle dans l'application mobile</label>
           <input name="accountName" value="{{accountName}}" placeholder="prenom.nom@domaine" />
           <button class="btn" type="submit" {{actionsDisabled}}>Generer le QR code</button>
@@ -269,14 +279,17 @@ enroll.MapPost("/start", async (HttpContext ctx, IHttpClientFactory factory, ICo
     }
 
     var upn = resolve.Upn!;
-  var idpName = config["Enrollment:IdpName"] ?? "freeADFSOtp";
-  var phoneIssuerName = config["Enrollment:PhoneIssuerName"];
-  if (string.IsNullOrWhiteSpace(phoneIssuerName))
-  {
-    phoneIssuerName = idpName;
-  }
+    var idpName = (config["Enrollment:IdpName"] ?? "freeADFSOtp").Trim();
+    var postedIssuerName = form["issuerName"].ToString();
+    var phoneIssuerName = string.IsNullOrWhiteSpace(postedIssuerName)
+        ? config["Enrollment:PhoneIssuerName"]
+        : postedIssuerName;
+    if (string.IsNullOrWhiteSpace(phoneIssuerName))
+    {
+        phoneIssuerName = idpName;
+    }
 
-  phoneIssuerName = phoneIssuerName.Trim();
+    phoneIssuerName = phoneIssuerName.Trim();
     var accountName = form["accountName"].ToString();
     if (string.IsNullOrWhiteSpace(accountName))
     {
@@ -320,6 +333,7 @@ enroll.MapPost("/start", async (HttpContext ctx, IHttpClientFactory factory, ICo
     <section class="card">
       <h1>Secret OTP genere</h1>
       <p><strong>UPN:</strong> {{Encode(root.GetProperty("userPrincipalName").GetString())}}</p>
+  <p><strong>Issuer mobile:</strong> {{Encode(root.GetProperty("issuerName").GetString())}}</p>
       <p><strong>Libelle mobile:</strong> {{Encode(root.GetProperty("phoneLabel").GetString())}}</p>
       <p><strong>Secret Base32:</strong><br /><span class="mono">{{Encode(root.GetProperty("secretBase32").GetString())}}</span></p>
       <p><strong>URI otpAuth:</strong><br /><span class="mono">{{Encode(root.GetProperty("otpAuthUri").GetString())}}</span></p>
