@@ -43,6 +43,8 @@ public sealed class FreeAdfsOtpAuthenticationAdapter : IAuthenticationAdapter
             return FreeAdfsOtpPresentationForm.Error("Impossible de determiner l'utilisateur (UPN).", _enrollmentPortalBaseUrl.ToString());
         }
 
+        PersistUpnInAuthenticationContext(authContext, upn);
+
         var isEnrolled = _backend.IsUserEnrolled(upn);
         if (!isEnrolled)
         {
@@ -139,8 +141,15 @@ public sealed class FreeAdfsOtpAuthenticationAdapter : IAuthenticationAdapter
         var upn = ResolveUpn(authContext, request);
         if (string.IsNullOrWhiteSpace(upn))
         {
+            upn = ResolveUpnFromProofData(proofData);
+        }
+
+        if (string.IsNullOrWhiteSpace(upn))
+        {
             return FreeAdfsOtpPresentationForm.Error("Session invalide: UPN introuvable.", _enrollmentPortalBaseUrl.ToString());
         }
+
+        PersistUpnInAuthenticationContext(authContext, upn);
 
         var otpCode = proofData?.Properties != null && proofData.Properties.ContainsKey("otpCode")
             ? proofData.Properties["otpCode"] as string
@@ -210,6 +219,65 @@ public sealed class FreeAdfsOtpAuthenticationAdapter : IAuthenticationAdapter
         }
 
         return request?.QueryString?["upn"];
+    }
+
+    private static string ResolveUpnFromProofData(IProofData proofData)
+    {
+        try
+        {
+            if (proofData?.Properties == null)
+            {
+                return null;
+            }
+
+            var upnKeys = new[]
+            {
+                AdfsOtpAdapterConstants.UpnClaimType,
+                "upn",
+                "userPrincipalName"
+            };
+
+            foreach (var key in upnKeys)
+            {
+                if (proofData.Properties.ContainsKey(key) && proofData.Properties[key] != null)
+                {
+                    var text = Convert.ToString(proofData.Properties[key]);
+                    if (!string.IsNullOrWhiteSpace(text))
+                    {
+                        return text;
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // Best-effort extraction.
+        }
+
+        return null;
+    }
+
+    private static void PersistUpnInAuthenticationContext(IAuthenticationContext authContext, string upn)
+    {
+        if (string.IsNullOrWhiteSpace(upn) || authContext?.Data == null)
+        {
+            return;
+        }
+
+        SetAuthenticationContextValue(authContext.Data, AdfsOtpAdapterConstants.UpnClaimType, upn);
+        SetAuthenticationContextValue(authContext.Data, "upn", upn);
+        SetAuthenticationContextValue(authContext.Data, "userPrincipalName", upn);
+    }
+
+    private static void SetAuthenticationContextValue(IDictionary<string, object> data, string key, string value)
+    {
+        if (data.ContainsKey(key))
+        {
+            data[key] = value;
+            return;
+        }
+
+        data.Add(key, value);
     }
 
     private static string ExtractTagValue(string xml, string tagName)
@@ -688,27 +756,29 @@ public sealed class FreeAdfsOtpPresentationForm : IAdapterPresentationForm
     private readonly string _message;
     private readonly string _enrollmentUrl;
     private readonly bool _showOtpInput;
+    private readonly string _upn;
 
-    private FreeAdfsOtpPresentationForm(string message, string enrollmentUrl, bool showOtpInput)
+    private FreeAdfsOtpPresentationForm(string message, string enrollmentUrl, bool showOtpInput, string upn)
     {
         _message = message;
         _enrollmentUrl = enrollmentUrl;
         _showOtpInput = showOtpInput;
+        _upn = upn;
     }
 
     public static FreeAdfsOtpPresentationForm Challenge(string upn, string enrollmentUrl)
     {
-        return new FreeAdfsOtpPresentationForm("Saisissez votre code OTP.", enrollmentUrl, true);
+        return new FreeAdfsOtpPresentationForm("Saisissez votre code OTP.", enrollmentUrl, true, upn);
     }
 
     public static FreeAdfsOtpPresentationForm NotEnrolled(string upn, string enrollmentUrl)
     {
-        return new FreeAdfsOtpPresentationForm("Utilisateur non enrole. Veuillez d'abord activer votre OTP.", enrollmentUrl, false);
+        return new FreeAdfsOtpPresentationForm("Utilisateur non enrole. Veuillez d'abord activer votre OTP.", enrollmentUrl, false, upn);
     }
 
     public static FreeAdfsOtpPresentationForm Error(string message, string enrollmentUrl)
     {
-        return new FreeAdfsOtpPresentationForm(message, enrollmentUrl, false);
+        return new FreeAdfsOtpPresentationForm(message, enrollmentUrl, false, string.Empty);
     }
 
     public string GetFormHtml(int lcid)
@@ -720,6 +790,7 @@ public sealed class FreeAdfsOtpPresentationForm : IAdapterPresentationForm
         return "<div id='loginArea'><form method='post' id='loginForm'>"
             + "<input id='authMethod' type='hidden' name='AuthMethod' value='%AuthMethod%' />"
             + "<input id='context' type='hidden' name='Context' value='%Context%' />"
+            + "<input id='upn' type='hidden' name='upn' value='" + WebUtility.HtmlEncode(_upn) + "' />"
             + "<p>" + WebUtility.HtmlEncode(_message) + "</p>"
             + otpInputHtml
             + "<div id='submissionArea' class='submitMargin'><input id='submitButton' type='submit' name='Submit' value='Valider' /></div>"
