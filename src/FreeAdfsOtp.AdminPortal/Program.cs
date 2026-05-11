@@ -209,15 +209,19 @@ admin.MapGet("/", (HttpContext ctx, IAntiforgery antiforgery) =>
 """, "text/html");
 });
 
-admin.MapPost("/admin/reset", async (HttpContext ctx, IHttpClientFactory factory, IAntiforgery antiforgery) =>
+admin.MapPost("/admin/reset", async (HttpContext ctx, IHttpClientFactory factory, IAntiforgery antiforgery, ILogger<Program> logger) =>
 {
-  if (!IsSameOriginRequest(ctx))
+  var originCheck = EvaluateSameOriginRequest(ctx);
+  if (!originCheck.IsAllowed)
   {
+    LogSameOriginRejection(logger, ctx, originCheck.Reason);
     return Results.Content(
       RenderActionResultHtml("Requete invalide", "err", "400", "Origin/Referer non autorise."),
       "text/html",
       statusCode: 400);
   }
+
+  LogSameOriginFallback(logger, ctx, originCheck.Reason);
 
   if (!await TryValidateCsrfAsync(ctx, antiforgery))
   {
@@ -240,15 +244,19 @@ admin.MapPost("/admin/reset", async (HttpContext ctx, IHttpClientFactory factory
     return Results.Content(RenderActionResultHtml("Résultat - Reset OTP", statusClass, response.StatusCode.ToString(), payload), "text/html");
 });
 
-admin.MapPost("/admin/unlock", async (HttpContext ctx, IHttpClientFactory factory, IAntiforgery antiforgery) =>
+admin.MapPost("/admin/unlock", async (HttpContext ctx, IHttpClientFactory factory, IAntiforgery antiforgery, ILogger<Program> logger) =>
 {
-  if (!IsSameOriginRequest(ctx))
+  var originCheck = EvaluateSameOriginRequest(ctx);
+  if (!originCheck.IsAllowed)
   {
+    LogSameOriginRejection(logger, ctx, originCheck.Reason);
     return Results.Content(
       RenderActionResultHtml("Requete invalide", "err", "400", "Origin/Referer non autorise."),
       "text/html",
       statusCode: 400);
   }
+
+  LogSameOriginFallback(logger, ctx, originCheck.Reason);
 
   if (!await TryValidateCsrfAsync(ctx, antiforgery))
   {
@@ -299,15 +307,20 @@ static async Task<bool> TryValidateCsrfAsync(HttpContext httpContext, IAntiforge
   }
 }
 
-static bool IsSameOriginRequest(HttpContext httpContext)
+static (bool IsAllowed, string Reason) EvaluateSameOriginRequest(HttpContext httpContext)
 {
   var request = httpContext.Request;
   var expectedScheme = GetFirstForwardedValue(request.Headers["X-Forwarded-Proto"].ToString()) ?? request.Scheme;
   var expectedAuthority = GetFirstForwardedValue(request.Headers["X-Forwarded-Host"].ToString()) ?? request.Host.Value;
   var fetchSite = request.Headers["Sec-Fetch-Site"].ToString();
+  if (fetchSite.Equals("cross-site", StringComparison.OrdinalIgnoreCase))
+  {
+    return (false, "sec-fetch-site-cross-site");
+  }
+
   if (fetchSite.Equals("same-origin", StringComparison.OrdinalIgnoreCase))
   {
-    return true;
+    return (true, "sec-fetch-site-same-origin");
   }
 
   var originHeader = request.Headers.Origin.ToString();
@@ -322,24 +335,58 @@ static bool IsSameOriginRequest(HttpContext httpContext)
   {
     // Some clients/proxies omit both headers (e.g., strict referrer policies).
     // In this case we rely on anti-forgery token validation already enforced on POST handlers.
-    return true;
+    return (true, "origin-referer-missing");
   }
 
   if (!string.IsNullOrWhiteSpace(originHeader) &&
       TryBuildAuthority(originHeader, out var originScheme, out var originAuthority))
   {
-    return originScheme.Equals(expectedScheme, StringComparison.OrdinalIgnoreCase)
-           && originAuthority.Equals(expectedAuthority, StringComparison.OrdinalIgnoreCase);
+    var originMatch = originScheme.Equals(expectedScheme, StringComparison.OrdinalIgnoreCase)
+                      && originAuthority.Equals(expectedAuthority, StringComparison.OrdinalIgnoreCase);
+    return originMatch
+      ? (true, "origin-match")
+      : (false, "origin-mismatch");
   }
 
   if (!string.IsNullOrWhiteSpace(refererHeader) &&
       TryBuildAuthority(refererHeader, out var refererScheme, out var refererAuthority))
   {
-    return refererScheme.Equals(expectedScheme, StringComparison.OrdinalIgnoreCase)
-           && refererAuthority.Equals(expectedAuthority, StringComparison.OrdinalIgnoreCase);
+    var refererMatch = refererScheme.Equals(expectedScheme, StringComparison.OrdinalIgnoreCase)
+                       && refererAuthority.Equals(expectedAuthority, StringComparison.OrdinalIgnoreCase);
+    return refererMatch
+      ? (true, "referer-match")
+      : (false, "referer-mismatch");
   }
 
-  return false;
+  return (false, "origin-referer-unusable");
+}
+
+static void LogSameOriginFallback(ILogger logger, HttpContext httpContext, string reason)
+{
+  if (!reason.Equals("origin-referer-missing", StringComparison.OrdinalIgnoreCase))
+  {
+    return;
+  }
+
+  logger.LogInformation(
+    "Same-origin guard fallback: Origin/Referer missing, relying on CSRF token. Path={Path}, SecFetchSite={SecFetchSite}",
+    httpContext.Request.Path,
+    httpContext.Request.Headers["Sec-Fetch-Site"].ToString());
+}
+
+static void LogSameOriginRejection(ILogger logger, HttpContext httpContext, string reason)
+{
+  logger.LogWarning(
+    "Rejected same-origin check. Reason={Reason}, Path={Path}, Origin={Origin}, Referer={Referer}, SecFetchSite={SecFetchSite}, ForwardedHost={ForwardedHost}, ForwardedProto={ForwardedProto}, Host={Host}, Scheme={Scheme}",
+    reason,
+    httpContext.Request.Path,
+    httpContext.Request.Headers.Origin.ToString(),
+    httpContext.Request.Headers.Referer.ToString(),
+    httpContext.Request.Headers["Sec-Fetch-Site"].ToString(),
+    httpContext.Request.Headers["X-Forwarded-Host"].ToString(),
+    httpContext.Request.Headers["X-Forwarded-Proto"].ToString(),
+    httpContext.Request.Host.Value,
+    httpContext.Request.Scheme);
 }
 
 static string? GetFirstForwardedValue(string? headerValue)

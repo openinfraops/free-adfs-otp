@@ -282,12 +282,16 @@ enroll.MapGet("", async (HttpContext ctx, IConfiguration config, IHttpClientFact
     return Results.Content(html, "text/html");
 });
 
-enroll.MapPost("/start", async (HttpContext ctx, IHttpClientFactory factory, IConfiguration config, IAntiforgery antiforgery) =>
+enroll.MapPost("/start", async (HttpContext ctx, IHttpClientFactory factory, IConfiguration config, IAntiforgery antiforgery, ILogger<Program> logger) =>
 {
-  if (!IsSameOriginRequest(ctx))
+  var originCheck = EvaluateSameOriginRequest(ctx);
+  if (!originCheck.IsAllowed)
   {
+    LogSameOriginRejection(logger, ctx, originCheck.Reason);
     return Results.Content(RenderError("Requete invalide (origin/referrer non autorise)."), "text/html", Encoding.UTF8, 400);
   }
+
+  LogSameOriginFallback(logger, ctx, originCheck.Reason);
 
   if (!await TryValidateCsrfAsync(ctx, antiforgery))
   {
@@ -330,7 +334,17 @@ enroll.MapPost("/start", async (HttpContext ctx, IHttpClientFactory factory, ICo
 
     using var document = JsonDocument.Parse(payload);
     var root = document.RootElement;
-    var qrCodePngBase64 = root.GetProperty("qrCodePngBase64").GetString();
+    var responseUpn = ReadJsonString(root, "userPrincipalName", upn);
+    var responseIssuer = ReadJsonString(root, "issuerName", phoneIssuerName);
+    var responsePhoneLabel = ReadJsonString(root, "phoneLabel", accountName);
+    var responseSecretBase32 = ReadJsonString(root, "secretBase32", string.Empty);
+    var responseOtpAuthUri = ReadJsonString(root, "otpAuthUri", string.Empty);
+    var qrCodePngBase64 = ReadJsonString(root, "qrCodePngBase64", string.Empty);
+
+    if (string.IsNullOrWhiteSpace(qrCodePngBase64))
+    {
+      return Results.Content(RenderError("Reponse API invalide: QR code introuvable dans la reponse enrollment/start."), "text/html", Encoding.UTF8, 502);
+    }
 
     var html = $$"""
 <!doctype html>
@@ -355,11 +369,11 @@ enroll.MapPost("/start", async (HttpContext ctx, IHttpClientFactory factory, ICo
   <main class="wrap">
     <section class="card">
       <h1>Secret OTP genere</h1>
-      <p><strong>UPN:</strong> {{Encode(root.GetProperty("userPrincipalName").GetString())}}</p>
-  <p><strong>Issuer mobile:</strong> {{Encode(root.GetProperty("issuerName").GetString())}}</p>
-      <p><strong>Libelle mobile:</strong> {{Encode(root.GetProperty("phoneLabel").GetString())}}</p>
-      <p><strong>Secret Base32:</strong><br /><span class="mono">{{Encode(root.GetProperty("secretBase32").GetString())}}</span></p>
-      <p><strong>URI otpAuth:</strong><br /><span class="mono">{{Encode(root.GetProperty("otpAuthUri").GetString())}}</span></p>
+      <p><strong>UPN:</strong> {{Encode(responseUpn)}}</p>
+  <p><strong>Issuer mobile:</strong> {{Encode(responseIssuer)}}</p>
+      <p><strong>Libelle mobile:</strong> {{Encode(responsePhoneLabel)}}</p>
+      <p><strong>Secret Base32:</strong><br /><span class="mono">{{Encode(responseSecretBase32)}}</span></p>
+      <p><strong>URI otpAuth:</strong><br /><span class="mono">{{Encode(responseOtpAuthUri)}}</span></p>
       <img class="qr" alt="QR OTP" src="data:image/png;base64,{{Encode(qrCodePngBase64)}}" />
       <p>Scannez le QR code puis revenez sur le portail pour valider le premier code OTP.</p>
       <div class="actions">
@@ -375,12 +389,16 @@ enroll.MapPost("/start", async (HttpContext ctx, IHttpClientFactory factory, ICo
     return Results.Content(html, "text/html", Encoding.UTF8);
 });
 
-enroll.MapPost("/verify", async (HttpContext ctx, IHttpClientFactory factory, IConfiguration config, IAntiforgery antiforgery) =>
+enroll.MapPost("/verify", async (HttpContext ctx, IHttpClientFactory factory, IConfiguration config, IAntiforgery antiforgery, ILogger<Program> logger) =>
 {
-  if (!IsSameOriginRequest(ctx))
+  var originCheck = EvaluateSameOriginRequest(ctx);
+  if (!originCheck.IsAllowed)
   {
+    LogSameOriginRejection(logger, ctx, originCheck.Reason);
     return Results.Content(RenderError("Requete invalide (origin/referrer non autorise)."), "text/html", Encoding.UTF8, 400);
   }
+
+  LogSameOriginFallback(logger, ctx, originCheck.Reason);
 
   if (!await TryValidateCsrfAsync(ctx, antiforgery))
   {
@@ -471,15 +489,20 @@ static async Task<bool> TryValidateCsrfAsync(HttpContext httpContext, IAntiforge
   }
 }
 
-static bool IsSameOriginRequest(HttpContext httpContext)
+static (bool IsAllowed, string Reason) EvaluateSameOriginRequest(HttpContext httpContext)
 {
   var request = httpContext.Request;
   var expectedScheme = GetFirstForwardedValue(request.Headers["X-Forwarded-Proto"].ToString()) ?? request.Scheme;
   var expectedAuthority = GetFirstForwardedValue(request.Headers["X-Forwarded-Host"].ToString()) ?? request.Host.Value;
   var fetchSite = request.Headers["Sec-Fetch-Site"].ToString();
+  if (fetchSite.Equals("cross-site", StringComparison.OrdinalIgnoreCase))
+  {
+    return (false, "sec-fetch-site-cross-site");
+  }
+
   if (fetchSite.Equals("same-origin", StringComparison.OrdinalIgnoreCase))
   {
-    return true;
+    return (true, "sec-fetch-site-same-origin");
   }
 
   var originHeader = request.Headers.Origin.ToString();
@@ -494,24 +517,58 @@ static bool IsSameOriginRequest(HttpContext httpContext)
   {
     // Some clients/proxies omit both headers (e.g., strict referrer policies).
     // In this case we rely on anti-forgery token validation already enforced on POST handlers.
-    return true;
+    return (true, "origin-referer-missing");
   }
 
   if (!string.IsNullOrWhiteSpace(originHeader) &&
       TryBuildAuthority(originHeader, out var originScheme, out var originAuthority))
   {
-    return originScheme.Equals(expectedScheme, StringComparison.OrdinalIgnoreCase)
-           && originAuthority.Equals(expectedAuthority, StringComparison.OrdinalIgnoreCase);
+    var originMatch = originScheme.Equals(expectedScheme, StringComparison.OrdinalIgnoreCase)
+                      && originAuthority.Equals(expectedAuthority, StringComparison.OrdinalIgnoreCase);
+    return originMatch
+      ? (true, "origin-match")
+      : (false, "origin-mismatch");
   }
 
   if (!string.IsNullOrWhiteSpace(refererHeader) &&
       TryBuildAuthority(refererHeader, out var refererScheme, out var refererAuthority))
   {
-    return refererScheme.Equals(expectedScheme, StringComparison.OrdinalIgnoreCase)
-           && refererAuthority.Equals(expectedAuthority, StringComparison.OrdinalIgnoreCase);
+    var refererMatch = refererScheme.Equals(expectedScheme, StringComparison.OrdinalIgnoreCase)
+                       && refererAuthority.Equals(expectedAuthority, StringComparison.OrdinalIgnoreCase);
+    return refererMatch
+      ? (true, "referer-match")
+      : (false, "referer-mismatch");
   }
 
-  return false;
+  return (false, "origin-referer-unusable");
+}
+
+static void LogSameOriginFallback(ILogger logger, HttpContext httpContext, string reason)
+{
+  if (!reason.Equals("origin-referer-missing", StringComparison.OrdinalIgnoreCase))
+  {
+    return;
+  }
+
+  logger.LogInformation(
+    "Same-origin guard fallback: Origin/Referer missing, relying on CSRF token. Path={Path}, SecFetchSite={SecFetchSite}",
+    httpContext.Request.Path,
+    httpContext.Request.Headers["Sec-Fetch-Site"].ToString());
+}
+
+static void LogSameOriginRejection(ILogger logger, HttpContext httpContext, string reason)
+{
+  logger.LogWarning(
+    "Rejected same-origin check. Reason={Reason}, Path={Path}, Origin={Origin}, Referer={Referer}, SecFetchSite={SecFetchSite}, ForwardedHost={ForwardedHost}, ForwardedProto={ForwardedProto}, Host={Host}, Scheme={Scheme}",
+    reason,
+    httpContext.Request.Path,
+    httpContext.Request.Headers.Origin.ToString(),
+    httpContext.Request.Headers.Referer.ToString(),
+    httpContext.Request.Headers["Sec-Fetch-Site"].ToString(),
+    httpContext.Request.Headers["X-Forwarded-Host"].ToString(),
+    httpContext.Request.Headers["X-Forwarded-Proto"].ToString(),
+    httpContext.Request.Host.Value,
+    httpContext.Request.Scheme);
 }
 
 static string? GetFirstForwardedValue(string? headerValue)
@@ -542,6 +599,19 @@ static bool TryBuildAuthority(string rawValue, out string scheme, out string aut
   scheme = parsed.Scheme;
   authority = parsed.IsDefaultPort ? parsed.Host : $"{parsed.Host}:{parsed.Port}";
   return true;
+}
+
+static string ReadJsonString(JsonElement root, string propertyName, string fallback)
+{
+  if (root.ValueKind == JsonValueKind.Object &&
+      root.TryGetProperty(propertyName, out var propertyValue) &&
+      propertyValue.ValueKind != JsonValueKind.Null &&
+      propertyValue.ValueKind != JsonValueKind.Undefined)
+  {
+    return propertyValue.GetString() ?? fallback;
+  }
+
+  return fallback;
 }
 
 static async Task<(bool IsEnrolled, bool IsActive)> GetEnrollmentStatusAsync(IHttpClientFactory factory, string upn, CancellationToken ct)
