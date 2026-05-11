@@ -151,6 +151,12 @@ public sealed class FreeAdfsOtpAuthenticationAdapter : IAuthenticationAdapter
 
         PersistUpnInAuthenticationContext(authContext, upn);
 
+        var isEnrolled = _backend.IsUserEnrolled(upn);
+        if (!isEnrolled)
+        {
+            return FreeAdfsOtpPresentationForm.NotEnrolled(upn, BuildEnrollmentUrl(upn));
+        }
+
         var otpCode = proofData?.Properties != null && proofData.Properties.ContainsKey("otpCode")
             ? proofData.Properties["otpCode"] as string
             : null;
@@ -793,7 +799,7 @@ public sealed class FreeAdfsOtpPresentationForm : IAdapterPresentationForm
 
     public static FreeAdfsOtpPresentationForm NotEnrolled(string upn, string enrollmentUrl)
     {
-        return new FreeAdfsOtpPresentationForm("Utilisateur non enrole. Veuillez d'abord activer votre OTP.", enrollmentUrl, false, upn);
+        return new FreeAdfsOtpPresentationForm("Utilisateur non enrole. Veuillez d'abord activer votre OTP. La saisie du code OTP sera disponible uniquement apres enrôlement.", enrollmentUrl, false, upn);
     }
 
     public static FreeAdfsOtpPresentationForm Error(string message, string enrollmentUrl)
@@ -807,14 +813,22 @@ public sealed class FreeAdfsOtpPresentationForm : IAdapterPresentationForm
             ? "<label for='otpCode' class='block'>Code OTP</label><input id='otpCode' name='otpCode' type='text' class='text' inputmode='numeric' autocomplete='one-time-code' required />"
             : "";
 
+        var submitHtml = _showOtpInput
+            ? "<div id='submissionArea' class='submitMargin'><input id='submitButton' type='submit' name='Submit' value='Valider' /></div>"
+            : "";
+
+        var enrollmentLinkText = _showOtpInput
+            ? "Aller vers l'enrollement OTP"
+            : "S'enroler maintenant";
+
         return "<div id='loginArea'><form method='post' id='loginForm'>"
             + "<input id='authMethod' type='hidden' name='AuthMethod' value='%AuthMethod%' />"
             + "<input id='context' type='hidden' name='Context' value='%Context%' />"
             + "<input id='upn' type='hidden' name='upn' value='" + WebUtility.HtmlEncode(_upn) + "' />"
             + "<p>" + WebUtility.HtmlEncode(_message) + "</p>"
             + otpInputHtml
-            + "<div id='submissionArea' class='submitMargin'><input id='submitButton' type='submit' name='Submit' value='Valider' /></div>"
-            + "<p><a href='" + WebUtility.HtmlEncode(_enrollmentUrl) + "' target='_blank' rel='noopener'>Aller vers l'enrollement OTP</a></p>"
+            + submitHtml
+            + "<p><a href='" + WebUtility.HtmlEncode(_enrollmentUrl) + "' target='_blank' rel='noopener'>" + enrollmentLinkText + "</a></p>"
             + "</form></div>";
     }
 
