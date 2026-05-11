@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Security.Principal;
+using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Authentication.Negotiate;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Server.IISIntegration;
@@ -45,6 +46,15 @@ builder.Services.AddAuthorization(options =>
     });
 });
 
+builder.Services.AddAntiforgery(options =>
+{
+  options.FormFieldName = "__RequestVerificationToken";
+  options.Cookie.Name = "__Host-freeadfsotp-admin-csrf";
+  options.Cookie.HttpOnly = true;
+  options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
+  options.Cookie.SameSite = SameSiteMode.Strict;
+});
+
 builder.Services.AddHttpClient("otp-api", client =>
 {
     client.BaseAddress = new Uri(builder.Configuration["OtpApi:BaseUrl"] ?? "https://localhost:7043");
@@ -64,8 +74,9 @@ app.UseAuthorization();
 
 var admin = app.MapGroup("/").RequireAuthorization("ServerAdminOnly");
 
-admin.MapGet("/", (HttpContext ctx) =>
+admin.MapGet("/", (HttpContext ctx, IAntiforgery antiforgery) =>
 {
+  var csrfTokenInput = BuildCsrfHiddenInput(antiforgery, ctx);
     var adminIdentity = WebUtility.HtmlEncode(ctx.User.Identity?.Name ?? "inconnu");
     return Results.Content($$"""
 <!doctype html>
@@ -165,6 +176,7 @@ admin.MapGet("/", (HttpContext ctx) =>
       <article class="card col-6">
         <h2>Réinitialiser les méthodes OTP</h2>
         <form method="post" action="/admin/reset">
+          {{csrfTokenInput}}
           <label>UPN cible</label>
           <input name="targetUpn" placeholder="target@domaine" required />
           <label>Administrateur</label>
@@ -179,6 +191,7 @@ admin.MapGet("/", (HttpContext ctx) =>
       <article class="card col-6">
         <h2>Déverrouiller un compte OTP</h2>
         <form method="post" action="/admin/unlock">
+          {{csrfTokenInput}}
           <label>UPN cible</label>
           <input name="targetUpn" placeholder="target@domaine" required />
           <label>Administrateur</label>
@@ -196,8 +209,24 @@ admin.MapGet("/", (HttpContext ctx) =>
 """, "text/html");
 });
 
-admin.MapPost("/admin/reset", async (HttpContext ctx, IHttpClientFactory factory) =>
+admin.MapPost("/admin/reset", async (HttpContext ctx, IHttpClientFactory factory, IAntiforgery antiforgery) =>
 {
+  if (!IsSameOriginRequest(ctx))
+  {
+    return Results.Content(
+      RenderActionResultHtml("Requete invalide", "err", "400", "Origin/Referer non autorise."),
+      "text/html",
+      statusCode: 400);
+  }
+
+  if (!await TryValidateCsrfAsync(ctx, antiforgery))
+  {
+    return Results.Content(
+      RenderActionResultHtml("Requete invalide", "err", "400", "CSRF token manquant ou invalide."),
+      "text/html",
+      statusCode: 400);
+  }
+
     var form = await ctx.Request.ReadFormAsync();
     var targetUpn = form["targetUpn"].ToString().Trim();
     var reason = form["reason"].ToString().Trim();
@@ -211,8 +240,24 @@ admin.MapPost("/admin/reset", async (HttpContext ctx, IHttpClientFactory factory
     return Results.Content(RenderActionResultHtml("Résultat - Reset OTP", statusClass, response.StatusCode.ToString(), payload), "text/html");
 });
 
-admin.MapPost("/admin/unlock", async (HttpContext ctx, IHttpClientFactory factory) =>
+admin.MapPost("/admin/unlock", async (HttpContext ctx, IHttpClientFactory factory, IAntiforgery antiforgery) =>
 {
+  if (!IsSameOriginRequest(ctx))
+  {
+    return Results.Content(
+      RenderActionResultHtml("Requete invalide", "err", "400", "Origin/Referer non autorise."),
+      "text/html",
+      statusCode: 400);
+  }
+
+  if (!await TryValidateCsrfAsync(ctx, antiforgery))
+  {
+    return Results.Content(
+      RenderActionResultHtml("Requete invalide", "err", "400", "CSRF token manquant ou invalide."),
+      "text/html",
+      statusCode: 400);
+  }
+
     var form = await ctx.Request.ReadFormAsync();
     var targetUpn = form["targetUpn"].ToString().Trim();
     var reason = form["reason"].ToString().Trim();
@@ -227,6 +272,73 @@ admin.MapPost("/admin/unlock", async (HttpContext ctx, IHttpClientFactory factor
 });
 
 app.Run();
+
+static string BuildCsrfHiddenInput(IAntiforgery antiforgery, HttpContext httpContext)
+{
+  var tokens = antiforgery.GetAndStoreTokens(httpContext);
+  if (string.IsNullOrWhiteSpace(tokens.RequestToken))
+  {
+    return string.Empty;
+  }
+
+  var fieldName = WebUtility.HtmlEncode(tokens.FormFieldName);
+  var token = WebUtility.HtmlEncode(tokens.RequestToken);
+  return $"<input type='hidden' name='{fieldName}' value='{token}' />";
+}
+
+static async Task<bool> TryValidateCsrfAsync(HttpContext httpContext, IAntiforgery antiforgery)
+{
+  try
+  {
+    await antiforgery.ValidateRequestAsync(httpContext);
+    return true;
+  }
+  catch (AntiforgeryValidationException)
+  {
+    return false;
+  }
+}
+
+static bool IsSameOriginRequest(HttpContext httpContext)
+{
+  var request = httpContext.Request;
+  var expectedScheme = request.Scheme;
+  var expectedAuthority = request.Host.Value;
+
+  var originHeader = request.Headers.Origin.ToString();
+  if (!string.IsNullOrWhiteSpace(originHeader) &&
+      TryBuildAuthority(originHeader, out var originScheme, out var originAuthority))
+  {
+    return originScheme.Equals(expectedScheme, StringComparison.OrdinalIgnoreCase)
+           && originAuthority.Equals(expectedAuthority, StringComparison.OrdinalIgnoreCase);
+  }
+
+  var refererHeader = request.Headers.Referer.ToString();
+  if (!string.IsNullOrWhiteSpace(refererHeader) &&
+      TryBuildAuthority(refererHeader, out var refererScheme, out var refererAuthority))
+  {
+    return refererScheme.Equals(expectedScheme, StringComparison.OrdinalIgnoreCase)
+           && refererAuthority.Equals(expectedAuthority, StringComparison.OrdinalIgnoreCase);
+  }
+
+  return false;
+}
+
+static bool TryBuildAuthority(string rawValue, out string scheme, out string authority)
+{
+  scheme = string.Empty;
+  authority = string.Empty;
+
+  if (!Uri.TryCreate(rawValue, UriKind.Absolute, out var parsed) ||
+      string.Equals(parsed.Scheme, "null", StringComparison.OrdinalIgnoreCase))
+  {
+    return false;
+  }
+
+  scheme = parsed.Scheme;
+  authority = parsed.IsDefaultPort ? parsed.Host : $"{parsed.Host}:{parsed.Port}";
+  return true;
+}
 
 static string RenderActionResultHtml(string title, string statusClass, string statusCode, string payload)
 {

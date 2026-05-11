@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
+using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Authentication.Negotiate;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Server.IISIntegration;
@@ -28,6 +29,15 @@ builder.Services.AddAuthorization(options =>
     options.FallbackPolicy = new AuthorizationPolicyBuilder()
         .RequireAuthenticatedUser()
         .Build();
+});
+
+builder.Services.AddAntiforgery(options =>
+{
+  options.FormFieldName = "__RequestVerificationToken";
+  options.Cookie.Name = "__Host-freeadfsotp-enroll-csrf";
+  options.Cookie.HttpOnly = true;
+  options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
+  options.Cookie.SameSite = SameSiteMode.Strict;
 });
 
 builder.Services.AddHttpClient("otp-api", client =>
@@ -59,8 +69,9 @@ app.MapGet("/", () => Results.Redirect("/enroll"));
 
 var enroll = app.MapGroup("/enroll").RequireAuthorization();
 
-enroll.MapGet("", async (HttpContext ctx, IConfiguration config, IHttpClientFactory factory) =>
+enroll.MapGet("", async (HttpContext ctx, IConfiguration config, IHttpClientFactory factory, IAntiforgery antiforgery) =>
 {
+  var csrfTokenInput = BuildCsrfHiddenInput(antiforgery, ctx);
     var resolve = ResolveUpn(ctx.User, config, null);
     var identityName = Encode(ctx.User.Identity?.Name ?? "inconnu");
     var accountName = Encode(resolve.Upn ?? string.Empty);
@@ -101,6 +112,7 @@ enroll.MapGet("", async (HttpContext ctx, IConfiguration config, IHttpClientFact
         <div class="step">Etape 1</div>
         <h2>Generer le secret OTP</h2>
         <form method="post" action="/enroll/start">
+          {{csrfTokenInput}}
           <label>Compte utilisateur</label>
           <input class="readonly" name="userPrincipalName" value="{{accountName}}" readonly />
           <label>Nom de l'emetteur (Issuer)</label>
@@ -116,6 +128,7 @@ enroll.MapGet("", async (HttpContext ctx, IConfiguration config, IHttpClientFact
         <div class="step">Etape 2</div>
         <h2>Verifier et activer</h2>
         <form method="post" action="/enroll/verify">
+          {{csrfTokenInput}}
           <label>Compte utilisateur</label>
           <input class="readonly" name="userPrincipalName" value="{{accountName}}" readonly />
           <label>Code OTP (6 chiffres)</label>
@@ -269,8 +282,18 @@ enroll.MapGet("", async (HttpContext ctx, IConfiguration config, IHttpClientFact
     return Results.Content(html, "text/html");
 });
 
-enroll.MapPost("/start", async (HttpContext ctx, IHttpClientFactory factory, IConfiguration config) =>
+enroll.MapPost("/start", async (HttpContext ctx, IHttpClientFactory factory, IConfiguration config, IAntiforgery antiforgery) =>
 {
+  if (!IsSameOriginRequest(ctx))
+  {
+    return Results.Content(RenderError("Requete invalide (origin/referrer non autorise)."), "text/html", Encoding.UTF8, 400);
+  }
+
+  if (!await TryValidateCsrfAsync(ctx, antiforgery))
+  {
+    return Results.Content(RenderError("Requete invalide (CSRF token manquant ou incorrect)."), "text/html", Encoding.UTF8, 400);
+  }
+
     var form = await ctx.Request.ReadFormAsync();
     var resolve = ResolveUpn(ctx.User, config, form["userPrincipalName"].ToString());
     if (!resolve.Ok)
@@ -352,8 +375,18 @@ enroll.MapPost("/start", async (HttpContext ctx, IHttpClientFactory factory, ICo
     return Results.Content(html, "text/html", Encoding.UTF8);
 });
 
-enroll.MapPost("/verify", async (HttpContext ctx, IHttpClientFactory factory, IConfiguration config) =>
+enroll.MapPost("/verify", async (HttpContext ctx, IHttpClientFactory factory, IConfiguration config, IAntiforgery antiforgery) =>
 {
+  if (!IsSameOriginRequest(ctx))
+  {
+    return Results.Content(RenderError("Requete invalide (origin/referrer non autorise)."), "text/html", Encoding.UTF8, 400);
+  }
+
+  if (!await TryValidateCsrfAsync(ctx, antiforgery))
+  {
+    return Results.Content(RenderError("Requete invalide (CSRF token manquant ou incorrect)."), "text/html", Encoding.UTF8, 400);
+  }
+
     var form = await ctx.Request.ReadFormAsync();
     var resolve = ResolveUpn(ctx.User, config, form["userPrincipalName"].ToString());
     if (!resolve.Ok)
@@ -411,6 +444,73 @@ enroll.MapPost("/verify", async (HttpContext ctx, IHttpClientFactory factory, IC
 });
 
 app.Run();
+
+static string BuildCsrfHiddenInput(IAntiforgery antiforgery, HttpContext httpContext)
+{
+  var tokens = antiforgery.GetAndStoreTokens(httpContext);
+  if (string.IsNullOrWhiteSpace(tokens.RequestToken))
+  {
+    return string.Empty;
+  }
+
+  var fieldName = Encode(tokens.FormFieldName);
+  var token = Encode(tokens.RequestToken);
+  return $"<input type='hidden' name='{fieldName}' value='{token}' />";
+}
+
+static async Task<bool> TryValidateCsrfAsync(HttpContext httpContext, IAntiforgery antiforgery)
+{
+  try
+  {
+    await antiforgery.ValidateRequestAsync(httpContext);
+    return true;
+  }
+  catch (AntiforgeryValidationException)
+  {
+    return false;
+  }
+}
+
+static bool IsSameOriginRequest(HttpContext httpContext)
+{
+  var request = httpContext.Request;
+  var expectedScheme = request.Scheme;
+  var expectedAuthority = request.Host.Value;
+
+  var originHeader = request.Headers.Origin.ToString();
+  if (!string.IsNullOrWhiteSpace(originHeader) &&
+      TryBuildAuthority(originHeader, out var originScheme, out var originAuthority))
+  {
+    return originScheme.Equals(expectedScheme, StringComparison.OrdinalIgnoreCase)
+           && originAuthority.Equals(expectedAuthority, StringComparison.OrdinalIgnoreCase);
+  }
+
+  var refererHeader = request.Headers.Referer.ToString();
+  if (!string.IsNullOrWhiteSpace(refererHeader) &&
+      TryBuildAuthority(refererHeader, out var refererScheme, out var refererAuthority))
+  {
+    return refererScheme.Equals(expectedScheme, StringComparison.OrdinalIgnoreCase)
+           && refererAuthority.Equals(expectedAuthority, StringComparison.OrdinalIgnoreCase);
+  }
+
+  return false;
+}
+
+static bool TryBuildAuthority(string rawValue, out string scheme, out string authority)
+{
+  scheme = string.Empty;
+  authority = string.Empty;
+
+  if (!Uri.TryCreate(rawValue, UriKind.Absolute, out var parsed) ||
+      string.Equals(parsed.Scheme, "null", StringComparison.OrdinalIgnoreCase))
+  {
+    return false;
+  }
+
+  scheme = parsed.Scheme;
+  authority = parsed.IsDefaultPort ? parsed.Host : $"{parsed.Host}:{parsed.Port}";
+  return true;
+}
 
 static async Task<(bool IsEnrolled, bool IsActive)> GetEnrollmentStatusAsync(IHttpClientFactory factory, string upn, CancellationToken ct)
 {
