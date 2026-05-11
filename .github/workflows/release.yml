@@ -99,6 +99,7 @@ jobs:
             DotnetPath = 'dotnet'
             PackagePrefix = 'freeADFSOtp-${{ github.ref_name }}'
             CreateBundle = $true
+            BuildAdfsRuntime = ($env:BUILD_ADFS_RUNTIME -eq 'true')
           }
 
           if ($env:SIGN_ADAPTER -eq 'true') {
@@ -107,7 +108,6 @@ jobs:
           }
 
           if ($env:BUILD_ADFS_RUNTIME -eq 'true') {
-            $params.BuildAdfsRuntime = $true
             $params.AdfsWebDll = $env:ADFS_WEB_DLL
           }
 

@@ -123,6 +123,7 @@ jobs:
           $params = @{
             Configuration = 'Release'
             DotnetPath = 'dotnet'
+            BuildAdfsRuntime = ($env:BUILD_ADFS_RUNTIME -eq 'true')
           }
 
           if ($env:SIGN_ADAPTER -eq 'true') {
@@ -131,7 +132,6 @@ jobs:
           }
 
           if ($env:BUILD_ADFS_RUNTIME -eq 'true') {
-            $params.BuildAdfsRuntime = $true
             $params.AdfsWebDll = $env:ADFS_WEB_DLL
           }
 

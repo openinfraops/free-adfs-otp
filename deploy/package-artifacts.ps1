@@ -46,6 +46,14 @@ function Reset-Directory {
     New-Item -ItemType Directory -Path $Path -Force | Out-Null
 }
 
+function Remove-DirectoryIfExists {
+    param([string]$Path)
+
+    if (Test-Path $Path) {
+        Remove-Item -Recurse -Force $Path
+    }
+}
+
 function New-ZipFromDirectory {
     param(
         [string]$SourceDirectory,
@@ -86,6 +94,13 @@ Write-Host "Publishing admin portal..."
 & $DotnetPath publish $adminProject -c $Configuration -o (Join-Path $stagingRoot "admin-portal")
 
 Write-Host "Building AD FS adapter..."
+$adapterOutput = Resolve-RepoPath "src\FreeAdfsOtp.AdfsAdapter\bin\$Configuration\net47"
+$adapterObjOutput = Resolve-RepoPath "src\FreeAdfsOtp.AdfsAdapter\obj\$Configuration\net47"
+
+Write-Host "Cleaning AD FS adapter outputs..."
+Remove-DirectoryIfExists -Path $adapterOutput
+Remove-DirectoryIfExists -Path $adapterObjOutput
+
 $adapterBuildArgs = @(
     "build",
     $adapterProject,
@@ -108,7 +123,18 @@ if ($BuildAdfsRuntime) {
 
 & $DotnetPath @adapterBuildArgs
 
-$adapterOutput = Resolve-RepoPath "src\FreeAdfsOtp.AdfsAdapter\bin\$Configuration\net47"
+$adapterDll = Join-Path $adapterOutput "FreeAdfsOtp.AdfsAdapter.dll"
+if (-not (Test-Path $adapterDll)) {
+    throw "AD FS adapter DLL not found after build: $adapterDll"
+}
+
+$adapterDllInfo = Get-Item $adapterDll
+Write-Host "AD FS adapter DLL built: $($adapterDllInfo.FullName) ($($adapterDllInfo.Length) bytes)"
+
+if ($BuildAdfsRuntime -and $adapterDllInfo.Length -lt 20000) {
+    throw "ADFS runtime build was requested, but adapter DLL appears too small ($($adapterDllInfo.Length) bytes). Failing package generation to avoid publishing a skeleton build."
+}
+
 $adapterStaging = Join-Path $stagingRoot "adfs-adapter"
 New-Item -ItemType Directory -Path $adapterStaging -Force | Out-Null
 Copy-Item -Recurse -Force (Join-Path $adapterOutput '*') $adapterStaging
