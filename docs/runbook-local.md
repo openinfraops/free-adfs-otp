@@ -61,6 +61,19 @@ Generation versionnee type release:
 - `dotnet run --project src/FreeAdfsOtp.EnrollmentPortal`
 - `dotnet run --project src/FreeAdfsOtp.AdminPortal`
 
+Configuration recommandee du portail admin:
+
+- [src/FreeAdfsOtp.AdminPortal/appsettings.json](../src/FreeAdfsOtp.AdminPortal/appsettings.json)
+   - `OtpApi:BaseUrl`: URL de l'API OTP
+   - `OtpApi:AdminApiKey`: cle API admin (doit correspondre a `AdminAuth:ApiKey` cote API)
+   - `Authentication:ForceNegotiateHandler`: laisser `false` sous IIS, passer a `true` uniquement en auto-hebergement si necessaire
+
+Securite d'acces portail admin:
+
+1. L'utilisateur doit etre authentifie en Windows
+2. L'utilisateur doit appartenir au groupe local `Administrators` du serveur
+3. Sous IIS, activer `Windows Authentication` et desactiver `Anonymous Authentication`
+
 Configuration recommandee du portail d'enrôlement:
 
 - [src/FreeAdfsOtp.EnrollmentPortal/appsettings.json](../src/FreeAdfsOtp.EnrollmentPortal/appsettings.json)

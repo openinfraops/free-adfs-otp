@@ -59,16 +59,62 @@ app.MapGet("/", () => Results.Redirect("/enroll"));
 
 var enroll = app.MapGroup("/enroll").RequireAuthorization();
 
-enroll.MapGet("", (HttpContext ctx, IConfiguration config) =>
+enroll.MapGet("", async (HttpContext ctx, IConfiguration config, IHttpClientFactory factory) =>
 {
     var resolve = ResolveUpn(ctx.User, config, null);
     var identityName = Encode(ctx.User.Identity?.Name ?? "inconnu");
-    var idpName = Encode(config["Enrollment:IdpName"] ?? "freeADFSOtp");
     var accountName = Encode(resolve.Upn ?? string.Empty);
 
-    var status = resolve.Ok
-        ? $"<p class='pill success'>Utilisateur detecte: <strong>{Encode(resolve.Upn!)}</strong></p>"
-        : $"<p class='pill error'>{Encode(resolve.ErrorMessage ?? "Impossible de determiner le compte utilisateur")}</p>";
+    var isAlreadyEnrolled = false;
+    if (resolve.Ok)
+    {
+        var enrollmentStatus = await GetEnrollmentStatusAsync(factory, resolve.Upn!, ctx.RequestAborted);
+        isAlreadyEnrolled = enrollmentStatus.IsEnrolled;
+    }
+
+    var status = !resolve.Ok
+        ? $"<p class='pill error'>{Encode(resolve.ErrorMessage ?? "Impossible de determiner le compte utilisateur")}</p>"
+        : isAlreadyEnrolled
+            ? $"<p class='pill info'>Utilisateur detecte: <strong>{Encode(resolve.Upn!)}</strong><br/>Ce compte est deja enrôle pour la MFA OTP.</p>"
+            : $"<p class='pill success'>Utilisateur detecte: <strong>{Encode(resolve.Upn!)}</strong></p>";
+
+    var actionsDisabled = (!resolve.Ok || isAlreadyEnrolled) ? "disabled" : string.Empty;
+    var enrollmentBody = isAlreadyEnrolled
+        ? $$"""
+      <article class="card col-12">
+        <div class="step">Statut</div>
+        <h2>Compte deja enrôle</h2>
+        <p class="hint">Vous disposez deja d'une methode OTP active. Aucune nouvelle generation de secret n'est necessaire.</p>
+        <p class="hint">Si vous changez de telephone ou perdez l'acces, contactez un administrateur pour reinitialiser vos methodes OTP.</p>
+      </article>
+"""
+        : $$"""
+      <article class="card col-7">
+        <div class="step">Etape 1</div>
+        <h2>Generer le secret OTP</h2>
+        <form method="post" action="/enroll/start">
+          <label>Compte utilisateur</label>
+          <input class="readonly" name="userPrincipalName" value="{{accountName}}" readonly />
+          <label>Libelle dans l'application mobile</label>
+          <input name="accountName" value="{{accountName}}" placeholder="prenom.nom@domaine" />
+          <button class="btn" type="submit" {{actionsDisabled}}>Generer le QR code</button>
+        </form>
+        <p class="hint">Le secret est genere cote serveur puis associe au compte detecte automatiquement.</p>
+      </article>
+
+      <article class="card col-5">
+        <div class="step">Etape 2</div>
+        <h2>Verifier et activer</h2>
+        <form method="post" action="/enroll/verify">
+          <label>Compte utilisateur</label>
+          <input class="readonly" name="userPrincipalName" value="{{accountName}}" readonly />
+          <label>Code OTP (6 chiffres)</label>
+          <input name="code" placeholder="123456" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required />
+          <button class="btn alt" type="submit" {{actionsDisabled}}>Valider l'enrollement</button>
+        </form>
+        <p class="hint">Apres validation, la MFA OTP est activee pour votre compte.</p>
+      </article>
+""";
 
     var html = $$"""
 <!doctype html>
@@ -129,8 +175,9 @@ enroll.MapGet("", (HttpContext ctx, IConfiguration config) =>
       font-size: .95rem;
       margin: 14px 0 0 0;
     }
-    .pill.success { color: #0f5132; background: #d1f4e4; border-color: #90d9bd; }
-    .pill.error { color: #6b1523; background: #ffe6ea; border-color: #f3b9c3; }
+  .pill.success { color: #0f5132; background: #d1f4e4; border-color: #90d9bd; }
+  .pill.info { color: #084469; background: #d9efff; border-color: #99cbeb; }
+  .pill.error { color: #6b1523; background: #ffe6ea; border-color: #f3b9c3; }
     .grid {
       margin-top: 16px;
       display: grid;
@@ -197,47 +244,12 @@ enroll.MapGet("", (HttpContext ctx, IConfiguration config) =>
       <p class="lead">Portail securise avec identification par authentification Windows integree.</p>
       <div class="meta">
         <span class="chip">Session: {{identityName}}</span>
-        <span class="chip">IDP: {{idpName}}</span>
       </div>
       {{status}}
     </section>
 
     <section class="grid">
-      <article class="card col-7">
-        <div class="step">Etape 1</div>
-        <h2>Generer le secret OTP</h2>
-        <form method="post" action="/enroll/start">
-          <label>Compte utilisateur</label>
-          <input class="readonly" name="userPrincipalName" value="{{accountName}}" readonly />
-          <label>Libelle dans l'application mobile</label>
-          <input name="accountName" value="{{accountName}}" placeholder="prenom.nom@domaine" />
-          <button class="btn" type="submit" {{(resolve.Ok ? string.Empty : "disabled")}}>Generer le QR code</button>
-        </form>
-        <p class="hint">Le secret est genere cote serveur puis associe au compte detecte automatiquement.</p>
-      </article>
-
-      <article class="card col-5">
-        <div class="step">Etape 2</div>
-        <h2>Verifier et activer</h2>
-        <form method="post" action="/enroll/verify">
-          <label>Compte utilisateur</label>
-          <input class="readonly" name="userPrincipalName" value="{{accountName}}" readonly />
-          <label>Code OTP (6 chiffres)</label>
-          <input name="code" placeholder="123456" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required />
-          <button class="btn alt" type="submit" {{(resolve.Ok ? string.Empty : "disabled")}}>Valider l'enrollement</button>
-        </form>
-        <p class="hint">Apres validation, la MFA OTP est activee pour votre compte.</p>
-      </article>
-
-      <article class="card col-12">
-        <div class="step">Securite</div>
-        <h2>Protections actives</h2>
-        <ul class="list">
-          <li>Authentification Windows integree obligatoire pour acceder au portail.</li>
-          <li>Utilisateur cible derive de l'identite Windows et non d'une saisie libre.</li>
-          <li>Entetes HTTP de durcissement: HSTS, CSP, X-Frame-Options, X-Content-Type-Options.</li>
-        </ul>
-      </article>
+      {{enrollmentBody}}
     </section>
   </main>
 </body>
@@ -385,6 +397,28 @@ enroll.MapPost("/verify", async (HttpContext ctx, IHttpClientFactory factory, IC
 });
 
 app.Run();
+
+static async Task<(bool IsEnrolled, bool IsActive)> GetEnrollmentStatusAsync(IHttpClientFactory factory, string upn, CancellationToken ct)
+{
+  var client = factory.CreateClient("otp-api");
+  var response = await client.GetAsync($"/otp/enrollment-status/{Uri.EscapeDataString(upn)}", ct);
+  if (!response.IsSuccessStatusCode)
+  {
+    return (false, false);
+  }
+
+  var payload = await response.Content.ReadAsStringAsync(ct);
+  using var document = JsonDocument.Parse(payload);
+  var root = document.RootElement;
+
+  var isEnrolled = root.TryGetProperty("isEnrolled", out var enrolledElement)
+    && enrolledElement.ValueKind == JsonValueKind.True;
+
+  var isActive = root.TryGetProperty("isActive", out var activeElement)
+    && activeElement.ValueKind == JsonValueKind.True;
+
+  return (isEnrolled, isActive);
+}
 
 static string Encode(string? value) => WebUtility.HtmlEncode(value ?? string.Empty);
 

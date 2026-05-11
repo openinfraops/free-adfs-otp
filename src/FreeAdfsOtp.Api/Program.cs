@@ -117,6 +117,12 @@ app.MapPost("/enrollment/start", async (
         return Results.BadRequest(new { error = "IdpName is required." });
     }
 
+    var existingUser = await repository.GetUserByUpnAsync(dto.UserPrincipalName, ct);
+    if (existingUser?.IsEnrolled == true)
+    {
+        return Results.Conflict(new { error = "User is already enrolled." });
+    }
+
     var secretBytes = RandomNumberGenerator.GetBytes(20);
     var secretBase32 = Base32Encoding.ToBase32(secretBytes);
     var accountName = string.IsNullOrWhiteSpace(dto.AccountName) ? dto.UserPrincipalName : dto.AccountName.Trim();
@@ -127,7 +133,7 @@ app.MapPost("/enrollment/start", async (
         new PendingEnrollmentState(dto.UserPrincipalName, secretBase32, issuerName, accountName, expiresUtc),
         ct);
 
-    var phoneLabel = $"{issuerName}:{accountName}";
+    var phoneLabel = accountName;
     var escapedLabel = Uri.EscapeDataString(phoneLabel);
     var escapedIssuer = Uri.EscapeDataString(issuerName);
     var otpAuthUri = $"otpauth://totp/{escapedLabel}?secret={secretBase32}&issuer={escapedIssuer}&algorithm=SHA1&digits=6&period=30";
