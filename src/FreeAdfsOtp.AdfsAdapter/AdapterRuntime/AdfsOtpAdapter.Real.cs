@@ -180,7 +180,6 @@ public sealed class FreeAdfsOtpAuthenticationAdapter : IAuthenticationAdapter
 
         outgoingClaims = new[]
         {
-            new Claim(AdfsOtpAdapterConstants.AuthenticationMethodClaimType, AdfsOtpAdapterConstants.AuthenticationMethodUri),
             new Claim(AdfsOtpAdapterConstants.AuthenticationMethodClaimType, AdfsOtpAdapterConstants.MultipleAuthnMethodUri)
         };
 
