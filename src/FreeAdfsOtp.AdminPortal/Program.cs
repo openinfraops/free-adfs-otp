@@ -304,8 +304,18 @@ static bool IsSameOriginRequest(HttpContext httpContext)
   var request = httpContext.Request;
   var expectedScheme = GetFirstForwardedValue(request.Headers["X-Forwarded-Proto"].ToString()) ?? request.Scheme;
   var expectedAuthority = GetFirstForwardedValue(request.Headers["X-Forwarded-Host"].ToString()) ?? request.Host.Value;
+  var fetchSite = request.Headers["Sec-Fetch-Site"].ToString();
+  if (fetchSite.Equals("same-origin", StringComparison.OrdinalIgnoreCase))
+  {
+    return true;
+  }
 
   var originHeader = request.Headers.Origin.ToString();
+  if (string.Equals(originHeader, "null", StringComparison.OrdinalIgnoreCase))
+  {
+    originHeader = string.Empty;
+  }
+
   var refererHeader = request.Headers.Referer.ToString();
 
   if (string.IsNullOrWhiteSpace(originHeader) && string.IsNullOrWhiteSpace(refererHeader))
