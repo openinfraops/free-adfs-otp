@@ -11,6 +11,7 @@ using FreeAdfsOtp.Core.Services;
 using QRCoder;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Host.UseWindowsService();
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();

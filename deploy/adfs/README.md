@@ -8,6 +8,7 @@ Scripts ajoutes:
 
 - `00-deploy-provider.ps1`: build + GAC + register + policy MFA
 - `99-rollback-provider.ps1`: clear policy + unregister + option remove GAC
+- `Setup-LocalApiService.ps1`: deploiement de l'API en service Windows local sur un noeud AD FS (sans IIS)
 
 Fichiers de configuration environnement:
 
@@ -85,3 +86,30 @@ Exemple (MFA uniquement en externe):
 - Tester d'abord sur un serveur AD FS de preproduction.
 - En mode SQL direct, verifier l'acces SQL depuis tous les noeuds AD FS.
 - Conserver la meme cle `SecretMasterKeyBase64` entre API et adapter AD FS.
+
+## Deployer l'API locale sur un noeud AD FS (sans IIS)
+
+Ce mode permet de faire tourner `FreeAdfsOtp.Api` localement sur chaque noeud AD FS via un service Windows, sans role IIS.
+
+### Prerequis
+
+- Package ZIP de l'API (extrait de `package-artifacts.ps1`)
+- `dotnet` runtime installe sur le noeud AD FS
+- Session PowerShell admin
+
+### Exemple interactif
+
+- `./deploy/adfs/Setup-LocalApiService.ps1 -Interactive`
+
+### Exemple non interactif
+
+- `./deploy/adfs/Setup-LocalApiService.ps1 -ConfigPath ./deploy/adfs/adfs-local-api.config.psd1`
+
+Le script:
+
+- extrait le ZIP API dans `InstallRoot\current`
+- met a jour `appsettings.json` (SQL, MasterKey, AdminApiKey, LocalCache)
+- cree/met a jour un service Windows
+- configure `ASPNETCORE_URLS` sur une URL locale (ex: `http://127.0.0.1:5180`)
+
+Puis configure l'adapter AD FS (`ApiBaseUrl`) vers cette URL locale.
