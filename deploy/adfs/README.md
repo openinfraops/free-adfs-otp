@@ -107,7 +107,7 @@ Ce mode permet de faire tourner `FreeAdfsOtp.Api` localement sur chaque noeud AD
 
 Le script:
 
-- extrait le ZIP API dans `InstallRoot\current`
+- extrait le ZIP API dans `InstallRoot`
 - met a jour `appsettings.json` (SQL, MasterKey, AdminApiKey, LocalCache)
 - cree/met a jour un service Windows
 - configure `ASPNETCORE_URLS` sur une URL locale (ex: `http://127.0.0.1:5180`)

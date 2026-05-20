@@ -113,6 +113,52 @@ function Invoke-ScExe {
     return $output
 }
 
+function Remove-ServiceIfExists {
+    param([string]$Name)
+
+    $serviceRegistryPath = "HKLM:\SYSTEM\CurrentControlSet\Services\$Name"
+
+    $existingService = Get-Service -Name $Name -ErrorAction SilentlyContinue
+    if (-not $existingService) {
+        return
+    }
+
+    if ($existingService.Status -ne 'Stopped') {
+        Stop-Service -Name $Name -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 1
+    }
+
+    $queryExOutput = & sc.exe queryex $Name 2>$null
+    if ($LASTEXITCODE -eq 0) {
+        $pidLine = $queryExOutput | Where-Object { $_ -match 'PID\s*:\s*\d+' } | Select-Object -First 1
+        if ($pidLine -match 'PID\s*:\s*(\d+)') {
+            $servicePid = [int]$Matches[1]
+            if ($servicePid -gt 0) {
+                Stop-Process -Id $servicePid -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    Invoke-ScExe -Arguments @('delete', $Name) -OperationDescription "delete service $Name" | Out-Null
+
+    $serviceDeleted = $false
+    for ($i = 0; $i -lt 120; $i++) {
+        Start-Sleep -Milliseconds 500
+
+        $serviceStillPresent = $null -ne (Get-Service -Name $Name -ErrorAction SilentlyContinue)
+        $registryStillPresent = Test-Path $serviceRegistryPath
+
+        if (-not $serviceStillPresent -and -not $registryStillPresent) {
+            $serviceDeleted = $true
+            break
+        }
+    }
+
+    if (-not $serviceDeleted) {
+        throw "Service '$Name' is still marked for deletion. Close services.msc and any tool querying this service, then retry. If it persists, reboot the node and rerun deployment."
+    }
+}
+
 function Update-JsonFile {
     param(
         [string]$Path,
@@ -216,8 +262,7 @@ $installRoot = $config.InstallRoot
 $serviceName = $config.ServiceName
 $dotnetPath = $config.DotnetPath
 $listenUrl = $config.ListenUrl
-$installRootLeaf = Split-Path -Path $installRoot -Leaf
-$appDir = if ($installRootLeaf -ieq "current") { $installRoot } else { Join-Path $installRoot "current" }
+$appDir = $installRoot
 
 if (-not (Test-Path $dotnetPath)) {
     throw "dotnet not found: $dotnetPath"
@@ -272,29 +317,8 @@ if (-not (Test-Path $apiDllPath)) {
     }
 }
 
-$existingService = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
-if ($existingService) {
-    Invoke-IfNotDryRun -Description "Stop and remove existing service '$serviceName'" -Action {
-        if ($existingService.Status -ne 'Stopped') {
-            Stop-Service -Name $serviceName -Force -ErrorAction SilentlyContinue
-            Start-Sleep -Seconds 1
-        }
-
-        Invoke-ScExe -Arguments @('delete', $serviceName) -OperationDescription "delete service $serviceName" | Out-Null
-
-        $serviceDeleted = $false
-        for ($i = 0; $i -lt 10; $i++) {
-            Start-Sleep -Milliseconds 500
-            if (-not (Get-Service -Name $serviceName -ErrorAction SilentlyContinue)) {
-                $serviceDeleted = $true
-                break
-            }
-        }
-
-        if (-not $serviceDeleted) {
-            throw "Service '$serviceName' was not deleted in time. Retry deployment after a few seconds."
-        }
-    }
+Invoke-IfNotDryRun -Description "Clean existing service '$serviceName' if present" -Action {
+    Remove-ServiceIfExists -Name $serviceName
 }
 
 $serviceCommandLine = ('"{0}" "{1}"' -f $dotnetPath, $apiDllPath)
