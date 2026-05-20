@@ -14,10 +14,24 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+builder.Services.Configure<LocalCacheOptions>(builder.Configuration.GetSection(LocalCacheOptions.SectionName));
 
 builder.Services.AddSingleton<IClock, SystemClock>();
 builder.Services.AddSingleton<RequestThrottleService>();
-builder.Services.AddScoped<IOtpRepository, SqlOtpRepository>();
+builder.Services.AddSingleton<LocalNodeCacheCipher>();
+builder.Services.AddSingleton<LocalOtpCacheStore>();
+builder.Services.AddScoped<SqlOtpRepository>();
+builder.Services.AddScoped<CachedOtpRepository>();
+builder.Services.AddScoped<IOtpRepository>(serviceProvider =>
+{
+    var cacheOptions = serviceProvider
+        .GetRequiredService<Microsoft.Extensions.Options.IOptions<LocalCacheOptions>>()
+        .Value;
+
+    return cacheOptions.Enabled
+        ? serviceProvider.GetRequiredService<CachedOtpRepository>()
+        : serviceProvider.GetRequiredService<SqlOtpRepository>();
+});
 builder.Services.AddHostedService<PendingEnrollmentCleanupService>();
 
 builder.Services.AddSingleton<ISecretProtector>(_ =>
