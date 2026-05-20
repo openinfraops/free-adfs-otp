@@ -7,4 +7,6 @@ public sealed class LocalCacheOptions
     public bool Enabled { get; set; } = false;
     public bool AllowSqlFallbackForValidation { get; set; } = true;
     public string DatabasePath { get; set; } = "cache/freeadfsotp-node-cache.db";
+    public bool PeriodicSyncEnabled { get; set; } = true;
+    public int PeriodicSyncIntervalSeconds { get; set; } = 30;
 }

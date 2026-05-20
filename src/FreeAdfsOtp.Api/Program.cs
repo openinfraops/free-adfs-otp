@@ -33,6 +33,7 @@ builder.Services.AddScoped<IOtpRepository>(serviceProvider =>
         : serviceProvider.GetRequiredService<SqlOtpRepository>();
 });
 builder.Services.AddHostedService<PendingEnrollmentCleanupService>();
+builder.Services.AddHostedService<LocalCachePeriodicSyncService>();
 
 builder.Services.AddSingleton<ISecretProtector>(_ =>
 {

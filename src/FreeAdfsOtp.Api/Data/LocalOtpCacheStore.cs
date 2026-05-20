@@ -2,6 +2,7 @@ using FreeAdfsOtp.Api.Security;
 using FreeAdfsOtp.Core.Models;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Options;
+using System.Collections.Generic;
 
 namespace FreeAdfsOtp.Api.Data;
 
@@ -83,6 +84,24 @@ ON CONFLICT(user_principal_name) DO UPDATE SET
         await using var cmd = new SqliteCommand(sql, connection);
         cmd.Parameters.AddWithValue("$upn", userPrincipalName);
         await cmd.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<string>> GetCachedUserPrincipalNamesAsync(CancellationToken cancellationToken)
+    {
+        const string sql = @"
+SELECT user_principal_name
+FROM cached_users;";
+
+        var result = new List<string>();
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var cmd = new SqliteCommand(sql, connection);
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            result.Add(reader.GetString(0));
+        }
+
+        return result;
     }
 
     public async Task<OtpMethod?> GetPrimaryMethodAsync(Guid userId, CancellationToken cancellationToken)
