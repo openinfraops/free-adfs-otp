@@ -1,3 +1,4 @@
+using FreeAdfsOtp.Api.Contracts;
 using FreeAdfsOtp.Core.Contracts;
 using FreeAdfsOtp.Core.Models;
 using Microsoft.Extensions.Options;
