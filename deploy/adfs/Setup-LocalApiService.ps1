@@ -10,6 +10,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$RegistryRootPath = "HKLM:\SOFTWARE\FreeAdfsOtp"
+$LocalApiRegistryPath = Join-Path $RegistryRootPath "LocalApi"
 
 function Test-IsAdministrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -94,6 +96,19 @@ function Invoke-IfNotDryRun {
     }
 
     & $Action
+}
+
+function Set-RegistryInstallMetadata {
+    param(
+        [string]$RegistryPath,
+        [hashtable]$Values
+    )
+
+    New-Item -Path $RegistryPath -Force | Out-Null
+    foreach ($key in $Values.Keys) {
+        $value = $Values[$key]
+        New-ItemProperty -Path $RegistryPath -Name $key -Value $value -PropertyType String -Force | Out-Null
+    }
 }
 
 function Invoke-ScExe {
@@ -351,6 +366,15 @@ Invoke-IfNotDryRun -Description "Start Windows service '$serviceName'" -Action {
     }
 
     Start-Service -Name $serviceName
+}
+
+Invoke-IfNotDryRun -Description "Write local API install metadata to registry" -Action {
+    Set-RegistryInstallMetadata -RegistryPath $LocalApiRegistryPath -Values @{
+        ServiceName = $serviceName
+        ConfigPath = $configFullPath
+        DeploymentPath = $appDir
+        ApiAssemblyPath = $apiDllPath
+    }
 }
 
 Write-Host "Local API service deployment completed."

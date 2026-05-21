@@ -16,9 +16,11 @@ builder.Host.UseWindowsService();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.Configure<LocalCacheOptions>(builder.Configuration.GetSection(LocalCacheOptions.SectionName));
+builder.Services.Configure<SqlResilienceOptions>(builder.Configuration.GetSection(SqlResilienceOptions.SectionName));
 
 builder.Services.AddSingleton<IClock, SystemClock>();
 builder.Services.AddSingleton<RequestThrottleService>();
+builder.Services.AddSingleton<SqlAvailabilityState>();
 builder.Services.AddSingleton<LocalNodeCacheCipher>();
 builder.Services.AddSingleton<LocalOtpCacheStore>();
 builder.Services.AddScoped<SqlOtpRepository>();
@@ -35,6 +37,7 @@ builder.Services.AddScoped<IOtpRepository>(serviceProvider =>
 });
 builder.Services.AddHostedService<PendingEnrollmentCleanupService>();
 builder.Services.AddHostedService<LocalCachePeriodicSyncService>();
+builder.Services.AddHostedService<SqlAvailabilityProbeService>();
 
 builder.Services.AddSingleton<ISecretProtector>(_ =>
 {

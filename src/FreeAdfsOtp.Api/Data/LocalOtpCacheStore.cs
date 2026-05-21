@@ -184,6 +184,18 @@ ON CONFLICT(method_id) DO UPDATE SET
         await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    public async Task DeleteMethodsByUserIdAsync(Guid userId, CancellationToken cancellationToken)
+    {
+        const string sql = @"
+DELETE FROM cached_methods
+WHERE user_id = $userId;";
+
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var cmd = new SqliteCommand(sql, connection);
+        cmd.Parameters.AddWithValue("$userId", userId.ToString("D"));
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     public async Task UpdateLastAcceptedTimeStepAsync(Guid methodId, long timeStep, CancellationToken cancellationToken)
     {
         const string sql = @"

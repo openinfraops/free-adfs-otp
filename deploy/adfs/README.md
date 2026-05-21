@@ -9,6 +9,8 @@ Scripts ajoutes:
 - `00-deploy-provider.ps1`: build + GAC + register + policy MFA
 - `99-rollback-provider.ps1`: clear policy + unregister + option remove GAC
 - `Setup-LocalApiService.ps1`: deploiement de l'API en service Windows local sur un noeud AD FS (sans IIS)
+- `Update-AdfsConnector.ps1`: mise a jour du connecteur ADFS (GAC + re-register provider via XML)
+- `Update-LocalApiService.ps1`: mise a jour de l'API locale a partir de la config existante
 
 Fichiers de configuration environnement:
 
@@ -105,6 +107,15 @@ Ce mode permet de faire tourner `FreeAdfsOtp.Api` localement sur chaque noeud AD
 
 - `./deploy/adfs/Setup-LocalApiService.ps1 -ConfigPath ./deploy/adfs/adfs-local-api.config.psd1`
 
+### Mise a jour API locale
+
+- `./deploy/adfs/Update-LocalApiService.ps1 -ConfigPath ./deploy/adfs/adfs-local-api.config.psd1`
+
+### Mise a jour connecteur ADFS
+
+- `./deploy/adfs/Update-AdfsConnector.ps1 -Interactive`
+- `./deploy/adfs/Update-AdfsConnector.ps1 -ConfigPath ./deploy/adfs/adfs-connector-update.config.psd1`
+
 Le script:
 
 - extrait le ZIP API dans `InstallRoot`
@@ -113,3 +124,12 @@ Le script:
 - configure `ASPNETCORE_URLS` sur une URL locale (ex: `http://127.0.0.1:5180`)
 
 Puis configure l'adapter AD FS (`ApiBaseUrl`) vers cette URL locale.
+
+## Lire les métadonnées d'installation (registre)
+
+Les scripts d'installation/update renseignent le registre sous `HKLM:\SOFTWARE\FreeAdfsOtp`.
+
+- Affichage lisible:
+	- `./deploy/adfs/Get-FreeAdfsOtpInstallInfo.ps1`
+- Sortie JSON:
+	- `./deploy/adfs/Get-FreeAdfsOtpInstallInfo.ps1 -AsJson`

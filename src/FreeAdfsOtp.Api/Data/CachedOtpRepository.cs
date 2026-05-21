@@ -9,25 +9,37 @@ public sealed class CachedOtpRepository : IOtpRepository
     private readonly SqlOtpRepository _sqlRepository;
     private readonly LocalOtpCacheStore _localCache;
     private readonly LocalCacheOptions _options;
+    private readonly SqlAvailabilityState _sqlAvailabilityState;
+    private readonly IClock _clock;
     private readonly ILogger<CachedOtpRepository> _logger;
 
     public CachedOtpRepository(
         SqlOtpRepository sqlRepository,
         LocalOtpCacheStore localCache,
         IOptions<LocalCacheOptions> options,
+        SqlAvailabilityState sqlAvailabilityState,
+        IClock clock,
         ILogger<CachedOtpRepository> logger)
     {
         _sqlRepository = sqlRepository;
         _localCache = localCache;
         _options = options.Value;
+        _sqlAvailabilityState = sqlAvailabilityState;
+        _clock = clock;
         _logger = logger;
     }
 
     public async Task<OtpUser?> GetUserByUpnAsync(string userPrincipalName, CancellationToken cancellationToken)
     {
+        if (_options.AllowSqlFallbackForValidation && _sqlAvailabilityState.ShouldBypassSql(_clock.UtcNow))
+        {
+            return await _localCache.GetUserByUpnAsync(userPrincipalName, cancellationToken);
+        }
+
         try
         {
             var user = await _sqlRepository.GetUserByUpnAsync(userPrincipalName, cancellationToken);
+            _sqlAvailabilityState.MarkAvailable();
             if (user is null)
             {
                 await _localCache.DeleteUserByUpnAsync(userPrincipalName, cancellationToken);
@@ -39,6 +51,7 @@ public sealed class CachedOtpRepository : IOtpRepository
         }
         catch (Exception ex) when (_options.AllowSqlFallbackForValidation)
         {
+            _sqlAvailabilityState.MarkUnavailable(_clock.UtcNow);
             _logger.LogWarning(ex, "SQL unavailable while reading user {UserPrincipalName}, falling back to local cache.", userPrincipalName);
             return await _localCache.GetUserByUpnAsync(userPrincipalName, cancellationToken);
         }
@@ -46,9 +59,15 @@ public sealed class CachedOtpRepository : IOtpRepository
 
     public async Task<OtpMethod?> GetPrimaryMethodAsync(Guid userId, CancellationToken cancellationToken)
     {
+        if (_options.AllowSqlFallbackForValidation && _sqlAvailabilityState.ShouldBypassSql(_clock.UtcNow))
+        {
+            return await _localCache.GetPrimaryMethodAsync(userId, cancellationToken);
+        }
+
         try
         {
             var method = await _sqlRepository.GetPrimaryMethodAsync(userId, cancellationToken);
+            _sqlAvailabilityState.MarkAvailable();
             if (method is not null)
             {
                 await _localCache.UpsertMethodAsync(method, cancellationToken);
@@ -58,6 +77,7 @@ public sealed class CachedOtpRepository : IOtpRepository
         }
         catch (Exception ex) when (_options.AllowSqlFallbackForValidation)
         {
+            _sqlAvailabilityState.MarkUnavailable(_clock.UtcNow);
             _logger.LogWarning(ex, "SQL unavailable while reading method for userId {UserId}, falling back to local cache.", userId);
             return await _localCache.GetPrimaryMethodAsync(userId, cancellationToken);
         }
@@ -65,14 +85,21 @@ public sealed class CachedOtpRepository : IOtpRepository
 
     public async Task<UserLockoutState> GetOrCreateLockoutAsync(Guid userId, CancellationToken cancellationToken)
     {
+        if (_options.AllowSqlFallbackForValidation && _sqlAvailabilityState.ShouldBypassSql(_clock.UtcNow))
+        {
+            return await _localCache.GetOrCreateLockoutAsync(userId, cancellationToken);
+        }
+
         try
         {
             var lockout = await _sqlRepository.GetOrCreateLockoutAsync(userId, cancellationToken);
+            _sqlAvailabilityState.MarkAvailable();
             await _localCache.SaveLockoutAsync(lockout, cancellationToken);
             return lockout;
         }
         catch (Exception ex) when (_options.AllowSqlFallbackForValidation)
         {
+            _sqlAvailabilityState.MarkUnavailable(_clock.UtcNow);
             _logger.LogWarning(ex, "SQL unavailable while reading lockout for userId {UserId}, falling back to local cache.", userId);
             return await _localCache.GetOrCreateLockoutAsync(userId, cancellationToken);
         }

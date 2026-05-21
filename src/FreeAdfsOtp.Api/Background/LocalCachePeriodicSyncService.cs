@@ -1,5 +1,6 @@
 using FreeAdfsOtp.Api.Data;
 using Microsoft.Extensions.Options;
+using System.Collections.Generic;
 
 namespace FreeAdfsOtp.Api.Background;
 
@@ -21,6 +22,8 @@ public sealed class LocalCachePeriodicSyncService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        await Task.Yield();
+
         if (!_options.Enabled || !_options.PeriodicSyncEnabled)
         {
             _logger.LogInformation("Local cache periodic sync disabled (Enabled={Enabled}, PeriodicSyncEnabled={PeriodicSyncEnabled}).", _options.Enabled, _options.PeriodicSyncEnabled);
@@ -32,11 +35,28 @@ public sealed class LocalCachePeriodicSyncService : BackgroundService
 
         _logger.LogInformation("Local cache periodic sync started with interval {IntervalSeconds}s.", intervalSeconds);
 
+        if (_options.InitialFullSyncEnabled)
+        {
+            try
+            {
+                await SyncAllUsersAsync(stoppingToken);
+                _logger.LogInformation("Local cache initial full sync completed.");
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Local cache initial full sync failed. Will retry during periodic sync.");
+            }
+        }
+
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
-                await SyncOnceAsync(stoppingToken);
+                await SyncAllUsersAsync(stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -60,21 +80,19 @@ public sealed class LocalCachePeriodicSyncService : BackgroundService
         _logger.LogInformation("Local cache periodic sync stopped.");
     }
 
-    private async Task SyncOnceAsync(CancellationToken cancellationToken)
+    private async Task SyncAllUsersAsync(CancellationToken cancellationToken)
     {
         using var scope = _scopeFactory.CreateScope();
         var sqlRepository = scope.ServiceProvider.GetRequiredService<SqlOtpRepository>();
         var localCache = scope.ServiceProvider.GetRequiredService<LocalOtpCacheStore>();
 
-        var cachedUpns = await localCache.GetCachedUserPrincipalNamesAsync(cancellationToken);
-        foreach (var upn in cachedUpns)
+        var sqlUsers = await sqlRepository.GetAllUsersAsync(cancellationToken);
+        var sqlUpns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var user in sqlUsers)
         {
-            var user = await sqlRepository.GetUserByUpnAsync(upn, cancellationToken);
-            if (user is null)
-            {
-                await localCache.DeleteUserByUpnAsync(upn, cancellationToken);
-                continue;
-            }
+            cancellationToken.ThrowIfCancellationRequested();
+            sqlUpns.Add(user.UserPrincipalName);
 
             await localCache.UpsertUserAsync(user, cancellationToken);
 
@@ -83,9 +101,22 @@ public sealed class LocalCachePeriodicSyncService : BackgroundService
             {
                 await localCache.UpsertMethodAsync(method, cancellationToken);
             }
+            else
+            {
+                await localCache.DeleteMethodsByUserIdAsync(user.UserId, cancellationToken);
+            }
 
             var lockout = await sqlRepository.GetOrCreateLockoutAsync(user.UserId, cancellationToken);
             await localCache.SaveLockoutAsync(lockout, cancellationToken);
+        }
+
+        var cachedUpns = await localCache.GetCachedUserPrincipalNamesAsync(cancellationToken);
+        foreach (var upn in cachedUpns)
+        {
+            if (!sqlUpns.Contains(upn))
+            {
+                await localCache.DeleteUserByUpnAsync(upn, cancellationToken);
+            }
         }
     }
 }

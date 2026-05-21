@@ -14,6 +14,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 $FixedProviderName = "Free-ADFS-OTP"
+$RegistryRootPath = "HKLM:\SOFTWARE\FreeAdfsOtp"
+$AdfsConnectorRegistryPath = Join-Path $RegistryRootPath "AdfsConnector"
 
 function Test-IsAdministrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -257,6 +259,19 @@ function Invoke-IfNotDryRun {
     & $Action
 }
 
+function Set-RegistryInstallMetadata {
+    param(
+        [string]$RegistryPath,
+        [hashtable]$Values
+    )
+
+    New-Item -Path $RegistryPath -Force | Out-Null
+    foreach ($key in $Values.Keys) {
+        $value = $Values[$key]
+        New-ItemProperty -Path $RegistryPath -Name $key -Value $value -PropertyType String -Force | Out-Null
+    }
+}
+
 if (-not (Test-IsAdministrator)) {
     throw "Run this script in an elevated PowerShell session (Administrator)."
 }
@@ -398,6 +413,14 @@ if ($applyGlobalRule) {
 if ($restartAdfsService) {
     Invoke-IfNotDryRun -Description "Restart AD FS service" -Action {
         Restart-Service adfssrv -Force
+    }
+}
+
+Invoke-IfNotDryRun -Description "Write ADFS connector install metadata to registry" -Action {
+    Set-RegistryInstallMetadata -RegistryPath $AdfsConnectorRegistryPath -Values @{
+        ProviderName = $providerName
+        NodeConfigPath = $configFullPath
+        ProviderConfigPath = $providerConfigPath
     }
 }
 

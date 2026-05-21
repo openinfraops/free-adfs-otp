@@ -39,6 +39,42 @@ public sealed class SqlOtpRepository : IOtpRepository
             reader.GetBoolean(reader.GetOrdinal("IsActive")));
     }
 
+    public async Task<IReadOnlyList<OtpUser>> GetAllUsersAsync(CancellationToken cancellationToken)
+    {
+        const string sql = @"
+SELECT UserId, UserPrincipalName, IsEnrolled, IsActive
+FROM otp.Users;";
+
+        var users = new List<OtpUser>();
+
+        await using var connection = new SqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        await using var cmd = new SqlCommand(sql, connection);
+        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            users.Add(new OtpUser(
+                reader.GetGuid(reader.GetOrdinal("UserId")),
+                reader.GetString(reader.GetOrdinal("UserPrincipalName")),
+                reader.GetBoolean(reader.GetOrdinal("IsEnrolled")),
+                reader.GetBoolean(reader.GetOrdinal("IsActive"))));
+        }
+
+        return users;
+    }
+
+    public async Task ProbeConnectivityAsync(CancellationToken cancellationToken)
+    {
+        const string sql = "SELECT 1;";
+
+        await using var connection = new SqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        await using var cmd = new SqlCommand(sql, connection);
+        await cmd.ExecuteScalarAsync(cancellationToken);
+    }
+
     public async Task<OtpMethod?> GetPrimaryMethodAsync(Guid userId, CancellationToken cancellationToken)
     {
         const string sql = @"
