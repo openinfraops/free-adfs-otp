@@ -21,6 +21,7 @@ public sealed class FreeAdfsOtpAuthenticationAdapter : IAuthenticationAdapter
     private Uri _enrollmentPortalBaseUrl;
     private string _sqlConnectionString;
     private string _secretMasterKeyBase64;
+    private string _secretMasterKeyDpapiFilePath;
     private string _backendMode;
 
     public FreeAdfsOtpAuthenticationAdapter()
@@ -30,6 +31,7 @@ public sealed class FreeAdfsOtpAuthenticationAdapter : IAuthenticationAdapter
         _backendMode = "Api";
         _sqlConnectionString = string.Empty;
         _secretMasterKeyBase64 = string.Empty;
+        _secretMasterKeyDpapiFilePath = string.Empty;
         _backend = new ApiOtpRuntimeBackend(new OtpAdapterSkeleton(_apiBaseUrl));
     }
 
@@ -89,6 +91,7 @@ public sealed class FreeAdfsOtpAuthenticationAdapter : IAuthenticationAdapter
         var enrollmentPortal = ExtractTagValue(data, "EnrollmentPortalBaseUrl");
         var sqlConnectionString = ExtractTagValue(data, "SqlConnectionString");
         var secretMasterKeyBase64 = ExtractTagValue(data, "SecretMasterKeyBase64");
+        var secretMasterKeyDpapiFilePath = ExtractTagValue(data, "SecretMasterKeyDpapiFilePath");
 
         if (!string.IsNullOrWhiteSpace(mode))
         {
@@ -115,9 +118,15 @@ public sealed class FreeAdfsOtpAuthenticationAdapter : IAuthenticationAdapter
             _secretMasterKeyBase64 = secretMasterKeyBase64.Trim();
         }
 
+        if (!string.IsNullOrWhiteSpace(secretMasterKeyDpapiFilePath))
+        {
+            _secretMasterKeyDpapiFilePath = secretMasterKeyDpapiFilePath.Trim();
+        }
+
         if (_backendMode.Equals("SqlDirect", StringComparison.OrdinalIgnoreCase))
         {
-            _backend = new SqlDirectOtpRuntimeBackend(_sqlConnectionString, _secretMasterKeyBase64);
+            var resolvedSecretMasterKeyBase64 = ResolveSecretMasterKeyBase64(_secretMasterKeyBase64, _secretMasterKeyDpapiFilePath);
+            _backend = new SqlDirectOtpRuntimeBackend(_sqlConnectionString, resolvedSecretMasterKeyBase64);
         }
         else
         {
@@ -309,6 +318,40 @@ public sealed class FreeAdfsOtpAuthenticationAdapter : IAuthenticationAdapter
         }
 
         return xml.Substring(start, end - start).Trim();
+    }
+
+    private static string ResolveSecretMasterKeyBase64(string inlineSecretMasterKeyBase64, string secretMasterKeyDpapiFilePath)
+    {
+        if (!string.IsNullOrWhiteSpace(inlineSecretMasterKeyBase64))
+        {
+            return inlineSecretMasterKeyBase64.Trim();
+        }
+
+        if (string.IsNullOrWhiteSpace(secretMasterKeyDpapiFilePath))
+        {
+            throw new InvalidOperationException("SecretMasterKeyBase64 or SecretMasterKeyDpapiFilePath must be configured for SqlDirect mode.");
+        }
+
+        var expandedPath = Environment.ExpandEnvironmentVariables(secretMasterKeyDpapiFilePath.Trim());
+        if (!Path.IsPathRooted(expandedPath))
+        {
+            expandedPath = Path.GetFullPath(expandedPath);
+        }
+
+        if (!File.Exists(expandedPath))
+        {
+            throw new FileNotFoundException("DPAPI secret file not found.", expandedPath);
+        }
+
+        var protectedPayloadBase64 = File.ReadAllText(expandedPath).Trim();
+        if (string.IsNullOrWhiteSpace(protectedPayloadBase64))
+        {
+            throw new InvalidOperationException("DPAPI secret file is empty: " + expandedPath);
+        }
+
+        var protectedPayload = Convert.FromBase64String(protectedPayloadBase64);
+        var rawSecretBytes = ProtectedData.Unprotect(protectedPayload, null, DataProtectionScope.LocalMachine);
+        return Encoding.UTF8.GetString(rawSecretBytes).Trim();
     }
 }
 

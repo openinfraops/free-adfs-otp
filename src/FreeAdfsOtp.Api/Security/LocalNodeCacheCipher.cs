@@ -9,11 +9,11 @@ public sealed class LocalNodeCacheCipher
 
     public LocalNodeCacheCipher(IConfiguration configuration)
     {
-        var base64MasterKey = configuration["SecretProtection:MasterKey"];
-        if (string.IsNullOrWhiteSpace(base64MasterKey))
-        {
-            throw new InvalidOperationException("SecretProtection:MasterKey is required for local cache encryption.");
-        }
+        var base64MasterKey = SecretValueResolver.ResolveRequired(
+            configuration,
+            "SecretProtection:MasterKey",
+            "SecretProtection:MasterKeyDpapiFilePath",
+            "SecretProtection:MasterKey");
 
         var masterKey = Convert.FromBase64String(base64MasterKey);
         if (masterKey.Length is not 32)

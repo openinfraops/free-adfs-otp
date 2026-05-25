@@ -39,15 +39,20 @@ builder.Services.AddHostedService<PendingEnrollmentCleanupService>();
 builder.Services.AddHostedService<LocalCachePeriodicSyncService>();
 builder.Services.AddHostedService<SqlAvailabilityProbeService>();
 
+var resolvedMasterKey = SecretValueResolver.ResolveRequired(
+    builder.Configuration,
+    "SecretProtection:MasterKey",
+    "SecretProtection:MasterKeyDpapiFilePath",
+    "SecretProtection:MasterKey");
+
+var resolvedAdminApiKey = SecretValueResolver.ResolveOptional(
+    builder.Configuration,
+    "AdminAuth:ApiKey",
+    "AdminAuth:ApiKeyDpapiFilePath");
+
 builder.Services.AddSingleton<ISecretProtector>(_ =>
 {
-    var base64Key = builder.Configuration["SecretProtection:MasterKey"];
-    if (string.IsNullOrWhiteSpace(base64Key))
-    {
-        throw new InvalidOperationException("SecretProtection:MasterKey is required.");
-    }
-
-    return new AesSecretProtector(base64Key);
+    return new AesSecretProtector(resolvedMasterKey);
 });
 
 builder.Services.AddScoped<OtpValidationService>();
@@ -240,7 +245,7 @@ app.MapPost("/admin/users/{upn}/reset-methods", async (
         return Results.StatusCode(StatusCodes.Status429TooManyRequests);
     }
 
-    if (!IsAdminAuthorized(httpContext, configuration))
+    if (!IsAdminAuthorized(httpContext, resolvedAdminApiKey))
     {
         return Results.Unauthorized();
     }
@@ -267,7 +272,7 @@ app.MapPost("/admin/users/{upn}/unlock", async (
         return Results.StatusCode(StatusCodes.Status429TooManyRequests);
     }
 
-    if (!IsAdminAuthorized(httpContext, configuration))
+    if (!IsAdminAuthorized(httpContext, resolvedAdminApiKey))
     {
         return Results.Unauthorized();
     }
@@ -289,9 +294,8 @@ static OtpSettings LoadSettings(IConfiguration configuration)
         LockoutMinutes: configuration.GetValue<int?>("Lockout:LockoutMinutes") ?? 15);
 }
 
-static bool IsAdminAuthorized(HttpContext httpContext, IConfiguration configuration)
+static bool IsAdminAuthorized(HttpContext httpContext, string? expectedApiKey)
 {
-    var expectedApiKey = configuration["AdminAuth:ApiKey"];
     if (string.IsNullOrWhiteSpace(expectedApiKey))
     {
         return false;

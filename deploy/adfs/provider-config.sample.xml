@@ -8,6 +8,9 @@
     - Application Name : facilite le filtrage/correlation cote SQL.
   -->
   <SqlConnectionString>Server=sql.contoso.local;Database=FreeAdfsOtp;Integrated Security=True;TrustServerCertificate=True;Connect Timeout=1;ConnectRetryCount=0;ConnectRetryInterval=1;Pooling=true;Min Pool Size=10;Max Pool Size=200;Application Name=freeADFSOtp-ADFS;</SqlConnectionString>
+  <!-- Option A: inline base64 master key -->
   <SecretMasterKeyBase64>PUT_BASE64_MASTER_KEY_HERE</SecretMasterKeyBase64>
+  <!-- Option B: DPAPI LocalMachine secret file (optional, replaces inline key) -->
+  <!-- <SecretMasterKeyDpapiFilePath>C:\ProgramData\FreeAdfsOtp\secrets\adfs-master-key.dpapi.txt</SecretMasterKeyDpapiFilePath> -->
   <EnrollmentPortalBaseUrl>https://otp-enroll.contoso.local/enroll</EnrollmentPortalBaseUrl>
 </Config>

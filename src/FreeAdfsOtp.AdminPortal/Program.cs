@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Security.Principal;
+using FreeAdfsOtp.AdminPortal.Security;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Authentication.Negotiate;
 using Microsoft.AspNetCore.Authorization;
@@ -59,7 +60,11 @@ builder.Services.AddHttpClient("otp-api", client =>
 {
     client.BaseAddress = new Uri(builder.Configuration["OtpApi:BaseUrl"] ?? "https://localhost:7043");
 
-    var adminApiKey = builder.Configuration["OtpApi:AdminApiKey"];
+  var adminApiKey = SecretValueResolver.ResolveOptional(
+    builder.Configuration,
+    "OtpApi:AdminApiKey",
+    "OtpApi:AdminApiKeyDpapiFilePath");
+
     if (!string.IsNullOrWhiteSpace(adminApiKey))
     {
         client.DefaultRequestHeaders.Add("X-Admin-ApiKey", adminApiKey);

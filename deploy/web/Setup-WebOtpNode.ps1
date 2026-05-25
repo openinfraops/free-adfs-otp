@@ -10,6 +10,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$DefaultMasterKeyDpapiFilePath = "C:\ProgramData\FreeAdfsOtp\secrets\master-key.dpapi.txt"
+$DefaultAdminApiKeyDpapiFilePath = "C:\ProgramData\FreeAdfsOtp\secrets\admin-apikey.dpapi.txt"
 
 function Test-IsAdministrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -58,7 +60,9 @@ function Write-ConfigFile {
     SqlPassword = '$(Escape-Psd1String $Config.SqlPassword)'
 
     MasterKeyBase64 = '$(Escape-Psd1String $Config.MasterKeyBase64)'
+    MasterKeyDpapiFilePath = '$(Escape-Psd1String $Config.MasterKeyDpapiFilePath)'
     AdminApiKey = '$(Escape-Psd1String $Config.AdminApiKey)'
+    AdminApiKeyDpapiFilePath = '$(Escape-Psd1String $Config.AdminApiKeyDpapiFilePath)'
 
     EnrollmentIdpName = '$(Escape-Psd1String $Config.EnrollmentIdpName)'
     EnrollmentAllowedWindowsDomain = '$(Escape-Psd1String $Config.EnrollmentAllowedWindowsDomain)'
@@ -204,7 +208,20 @@ if ($Interactive -or -not $configExists) {
     }
 
     $masterKeyBase64 = Read-Host "API SecretProtection:MasterKey (base64 32 bytes)"
+    $masterKeyDpapiFilePath = Read-Host "API SecretProtection:MasterKeyDpapiFilePath (optional, default: $DefaultMasterKeyDpapiFilePath)"
+    if ([string]::IsNullOrWhiteSpace($masterKeyDpapiFilePath) -and [string]::IsNullOrWhiteSpace($masterKeyBase64)) {
+        $masterKeyDpapiFilePath = $DefaultMasterKeyDpapiFilePath
+        Write-Host "Using default MasterKeyDpapiFilePath: $masterKeyDpapiFilePath"
+    }
+    if ([string]::IsNullOrWhiteSpace($masterKeyBase64) -and [string]::IsNullOrWhiteSpace($masterKeyDpapiFilePath)) { throw "MasterKeyBase64 or MasterKeyDpapiFilePath is required." }
+
     $adminApiKey = Read-Host "Admin API key (same value for API and admin portal)"
+    $adminApiKeyDpapiFilePath = Read-Host "Admin API key DPAPI file path (optional, default: $DefaultAdminApiKeyDpapiFilePath; same path can be reused by API and admin portal)"
+    if ([string]::IsNullOrWhiteSpace($adminApiKeyDpapiFilePath) -and [string]::IsNullOrWhiteSpace($adminApiKey)) {
+        $adminApiKeyDpapiFilePath = $DefaultAdminApiKeyDpapiFilePath
+        Write-Host "Using default AdminApiKeyDpapiFilePath: $adminApiKeyDpapiFilePath"
+    }
+    if ([string]::IsNullOrWhiteSpace($adminApiKey) -and [string]::IsNullOrWhiteSpace($adminApiKeyDpapiFilePath)) { throw "AdminApiKey or AdminApiKeyDpapiFilePath is required." }
 
     $enrollmentIdpName = Read-Host "Enrollment IDP name"; if ([string]::IsNullOrWhiteSpace($enrollmentIdpName)) { $enrollmentIdpName = "freeADFSOtp" }
     $enrollmentAllowedWindowsDomain = Read-Host "Enrollment allowed Windows domain (NetBIOS, optional)"
@@ -228,7 +245,9 @@ if ($Interactive -or -not $configExists) {
         SqlUser = $sqlUser
         SqlPassword = $sqlPassword
         MasterKeyBase64 = $masterKeyBase64
+        MasterKeyDpapiFilePath = $masterKeyDpapiFilePath
         AdminApiKey = $adminApiKey
+        AdminApiKeyDpapiFilePath = $adminApiKeyDpapiFilePath
         EnrollmentIdpName = $enrollmentIdpName
         EnrollmentAllowedWindowsDomain = $enrollmentAllowedWindowsDomain
         EnrollmentDefaultUpnSuffix = $enrollmentDefaultUpnSuffix
@@ -242,6 +261,18 @@ if ($Interactive -or -not $configExists) {
 }
 
 $config = Import-PowerShellDataFile -Path $configFullPath
+
+$configuredMasterKeyBase64 = [string](Get-ConfigValue -Config $config -Name "MasterKeyBase64" -DefaultValue "")
+$configuredMasterKeyDpapiFilePath = [string](Get-ConfigValue -Config $config -Name "MasterKeyDpapiFilePath" -DefaultValue "")
+if ([string]::IsNullOrWhiteSpace($configuredMasterKeyBase64) -and [string]::IsNullOrWhiteSpace($configuredMasterKeyDpapiFilePath)) {
+    throw "MasterKeyBase64 or MasterKeyDpapiFilePath is required in config."
+}
+
+$configuredAdminApiKey = [string](Get-ConfigValue -Config $config -Name "AdminApiKey" -DefaultValue "")
+$configuredAdminApiKeyDpapiFilePath = [string](Get-ConfigValue -Config $config -Name "AdminApiKeyDpapiFilePath" -DefaultValue "")
+if ([string]::IsNullOrWhiteSpace($configuredAdminApiKey) -and [string]::IsNullOrWhiteSpace($configuredAdminApiKeyDpapiFilePath)) {
+    throw "AdminApiKey or AdminApiKeyDpapiFilePath is required in config."
+}
 
 $apiZipPath = Resolve-RepoPath $config.ApiZipPath
 $enrollmentZipPath = Resolve-RepoPath $config.EnrollmentZipPath
@@ -292,6 +323,8 @@ if (-not (Test-Path $adminSettingsPath)) { throw "Missing appsettings.json in ad
 
 $apiBaseUrl = "https://$($config.ApiHost)"
 $connectionString = Build-ConnectionString -Config $config
+$masterKeyDpapiFilePath = [string](Get-ConfigValue -Config $config -Name "MasterKeyDpapiFilePath" -DefaultValue "")
+$adminApiKeyDpapiFilePath = [string](Get-ConfigValue -Config $config -Name "AdminApiKeyDpapiFilePath" -DefaultValue "")
 
 Invoke-IfNotDryRun -Description "Write API and portal appsettings" -Action {
     Update-JsonFile -Path $apiSettingsPath -Update {
@@ -301,8 +334,24 @@ Invoke-IfNotDryRun -Description "Write API and portal appsettings" -Action {
         $adminAuth = Ensure-JsonObjectProperty -Object $json -PropertyName "AdminAuth"
 
         $connectionStrings.OtpSql = $connectionString
-        $secretProtection.MasterKey = $config.MasterKeyBase64
-        $adminAuth.ApiKey = $config.AdminApiKey
+
+        if (-not [string]::IsNullOrWhiteSpace($masterKeyDpapiFilePath)) {
+            $secretProtection.MasterKey = ""
+            $secretProtection.MasterKeyDpapiFilePath = $masterKeyDpapiFilePath
+        }
+        else {
+            $secretProtection.MasterKey = $config.MasterKeyBase64
+            $secretProtection.MasterKeyDpapiFilePath = ""
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($adminApiKeyDpapiFilePath)) {
+            $adminAuth.ApiKey = ""
+            $adminAuth.ApiKeyDpapiFilePath = $adminApiKeyDpapiFilePath
+        }
+        else {
+            $adminAuth.ApiKey = $config.AdminApiKey
+            $adminAuth.ApiKeyDpapiFilePath = ""
+        }
     }
 
     Update-JsonFile -Path $enrollmentSettingsPath -Update {
@@ -320,8 +369,17 @@ Invoke-IfNotDryRun -Description "Write API and portal appsettings" -Action {
     Update-JsonFile -Path $adminSettingsPath -Update {
         param($json)
         $otpApi = Ensure-JsonObjectProperty -Object $json -PropertyName "OtpApi"
+
         $otpApi.BaseUrl = $apiBaseUrl
-        $otpApi.AdminApiKey = $config.AdminApiKey
+
+        if (-not [string]::IsNullOrWhiteSpace($adminApiKeyDpapiFilePath)) {
+            $otpApi.AdminApiKey = ""
+            $otpApi.AdminApiKeyDpapiFilePath = $adminApiKeyDpapiFilePath
+        }
+        else {
+            $otpApi.AdminApiKey = $config.AdminApiKey
+            $otpApi.AdminApiKeyDpapiFilePath = ""
+        }
     }
 }
 

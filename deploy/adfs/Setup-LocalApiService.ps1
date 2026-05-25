@@ -12,6 +12,8 @@ param(
 $ErrorActionPreference = "Stop"
 $RegistryRootPath = "HKLM:\SOFTWARE\FreeAdfsOtp"
 $LocalApiRegistryPath = Join-Path $RegistryRootPath "LocalApi"
+$DefaultMasterKeyDpapiFilePath = "C:\ProgramData\FreeAdfsOtp\secrets\master-key.dpapi.txt"
+$DefaultAdminApiKeyDpapiFilePath = "C:\ProgramData\FreeAdfsOtp\secrets\admin-apikey.dpapi.txt"
 
 function Test-IsAdministrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -51,7 +53,9 @@ function Write-ConfigFile {
 
     OtpSqlConnectionString = '$(ConvertTo-Psd1SafeString $Config.OtpSqlConnectionString)'
     MasterKeyBase64 = '$(ConvertTo-Psd1SafeString $Config.MasterKeyBase64)'
+    MasterKeyDpapiFilePath = '$(ConvertTo-Psd1SafeString $Config.MasterKeyDpapiFilePath)'
     AdminApiKey = '$(ConvertTo-Psd1SafeString $Config.AdminApiKey)'
+    AdminApiKeyDpapiFilePath = '$(ConvertTo-Psd1SafeString $Config.AdminApiKeyDpapiFilePath)'
 
     LocalCacheEnabled = `$$($Config.LocalCacheEnabled)
     AllowSqlFallbackForValidation = `$$($Config.AllowSqlFallbackForValidation)
@@ -221,10 +225,20 @@ if ($Interactive -or -not $configExists) {
     if ([string]::IsNullOrWhiteSpace($otpSqlConnectionString)) { throw "OtpSqlConnectionString is required." }
 
     $masterKeyBase64 = Read-Host "SecretProtection:MasterKey (base64 32 bytes)"
-    if ([string]::IsNullOrWhiteSpace($masterKeyBase64)) { throw "MasterKeyBase64 is required." }
+    $masterKeyDpapiFilePath = Read-Host "SecretProtection:MasterKeyDpapiFilePath (optional, default: $DefaultMasterKeyDpapiFilePath)"
+    if ([string]::IsNullOrWhiteSpace($masterKeyDpapiFilePath) -and [string]::IsNullOrWhiteSpace($masterKeyBase64)) {
+        $masterKeyDpapiFilePath = $DefaultMasterKeyDpapiFilePath
+        Write-Host "Using default MasterKeyDpapiFilePath: $masterKeyDpapiFilePath"
+    }
+    if ([string]::IsNullOrWhiteSpace($masterKeyBase64) -and [string]::IsNullOrWhiteSpace($masterKeyDpapiFilePath)) { throw "MasterKeyBase64 or MasterKeyDpapiFilePath is required." }
 
     $adminApiKey = Read-Host "AdminAuth:ApiKey"
-    if ([string]::IsNullOrWhiteSpace($adminApiKey)) { throw "AdminApiKey is required." }
+    $adminApiKeyDpapiFilePath = Read-Host "AdminAuth:ApiKeyDpapiFilePath (optional, default: $DefaultAdminApiKeyDpapiFilePath)"
+    if ([string]::IsNullOrWhiteSpace($adminApiKeyDpapiFilePath) -and [string]::IsNullOrWhiteSpace($adminApiKey)) {
+        $adminApiKeyDpapiFilePath = $DefaultAdminApiKeyDpapiFilePath
+        Write-Host "Using default AdminApiKeyDpapiFilePath: $adminApiKeyDpapiFilePath"
+    }
+    if ([string]::IsNullOrWhiteSpace($adminApiKey) -and [string]::IsNullOrWhiteSpace($adminApiKeyDpapiFilePath)) { throw "AdminApiKey or AdminApiKeyDpapiFilePath is required." }
 
     $localCacheEnabled = Read-Bool -Prompt "Enable local cache" -Default $true
     $allowSqlFallback = Read-Bool -Prompt "Allow SQL fallback for validation" -Default $true
@@ -252,7 +266,9 @@ if ($Interactive -or -not $configExists) {
         ListenUrl = $listenUrl
         OtpSqlConnectionString = $otpSqlConnectionString
         MasterKeyBase64 = $masterKeyBase64
+        MasterKeyDpapiFilePath = $masterKeyDpapiFilePath
         AdminApiKey = $adminApiKey
+        AdminApiKeyDpapiFilePath = $adminApiKeyDpapiFilePath
         LocalCacheEnabled = $localCacheEnabled
         AllowSqlFallbackForValidation = $allowSqlFallback
         LocalCacheDatabasePath = $localCacheDbPath
@@ -268,6 +284,18 @@ if ($Interactive -or -not $configExists) {
 
 $config = Import-PowerShellDataFile -Path $configFullPath
 
+$configuredMasterKeyBase64 = if ($config.ContainsKey("MasterKeyBase64") -and $null -ne $config.MasterKeyBase64) { [string]$config.MasterKeyBase64 } else { "" }
+$configuredMasterKeyDpapiFilePath = if ($config.ContainsKey("MasterKeyDpapiFilePath") -and $null -ne $config.MasterKeyDpapiFilePath) { [string]$config.MasterKeyDpapiFilePath } else { "" }
+if ([string]::IsNullOrWhiteSpace($configuredMasterKeyBase64) -and [string]::IsNullOrWhiteSpace($configuredMasterKeyDpapiFilePath)) {
+    throw "MasterKeyBase64 or MasterKeyDpapiFilePath is required in config."
+}
+
+$configuredAdminApiKey = if ($config.ContainsKey("AdminApiKey") -and $null -ne $config.AdminApiKey) { [string]$config.AdminApiKey } else { "" }
+$configuredAdminApiKeyDpapiFilePath = if ($config.ContainsKey("AdminApiKeyDpapiFilePath") -and $null -ne $config.AdminApiKeyDpapiFilePath) { [string]$config.AdminApiKeyDpapiFilePath } else { "" }
+if ([string]::IsNullOrWhiteSpace($configuredAdminApiKey) -and [string]::IsNullOrWhiteSpace($configuredAdminApiKeyDpapiFilePath)) {
+    throw "AdminApiKey or AdminApiKeyDpapiFilePath is required in config."
+}
+
 $apiZipPath = Resolve-RepoPath $config.ApiZipPath
 if (-not (Test-Path $apiZipPath)) {
     throw "API ZIP not found: $apiZipPath"
@@ -277,6 +305,8 @@ $installRoot = $config.InstallRoot
 $serviceName = $config.ServiceName
 $dotnetPath = $config.DotnetPath
 $listenUrl = $config.ListenUrl
+$masterKeyDpapiFilePath = if ($config.ContainsKey("MasterKeyDpapiFilePath") -and $null -ne $config.MasterKeyDpapiFilePath) { [string]$config.MasterKeyDpapiFilePath } else { "" }
+$adminApiKeyDpapiFilePath = if ($config.ContainsKey("AdminApiKeyDpapiFilePath") -and $null -ne $config.AdminApiKeyDpapiFilePath) { [string]$config.AdminApiKeyDpapiFilePath } else { "" }
 $appDir = $installRoot
 
 if (-not (Test-Path $dotnetPath)) {
@@ -301,14 +331,30 @@ Invoke-IfNotDryRun -Description "Update appsettings for local API node" -Action 
     Update-JsonFile -Path $appSettingsPath -Update {
         param($json)
 
-    $connectionStrings = Get-OrAddJsonObjectProperty -Object $json -PropertyName "ConnectionStrings"
-    $secretProtection = Get-OrAddJsonObjectProperty -Object $json -PropertyName "SecretProtection"
-    $adminAuth = Get-OrAddJsonObjectProperty -Object $json -PropertyName "AdminAuth"
-    $localCache = Get-OrAddJsonObjectProperty -Object $json -PropertyName "LocalCache"
+        $connectionStrings = Get-OrAddJsonObjectProperty -Object $json -PropertyName "ConnectionStrings"
+        $secretProtection = Get-OrAddJsonObjectProperty -Object $json -PropertyName "SecretProtection"
+        $adminAuth = Get-OrAddJsonObjectProperty -Object $json -PropertyName "AdminAuth"
+        $localCache = Get-OrAddJsonObjectProperty -Object $json -PropertyName "LocalCache"
 
         $connectionStrings.OtpSql = $config.OtpSqlConnectionString
-        $secretProtection.MasterKey = $config.MasterKeyBase64
-        $adminAuth.ApiKey = $config.AdminApiKey
+
+        if (-not [string]::IsNullOrWhiteSpace($masterKeyDpapiFilePath)) {
+            $secretProtection.MasterKey = ""
+            $secretProtection.MasterKeyDpapiFilePath = $masterKeyDpapiFilePath
+        }
+        else {
+            $secretProtection.MasterKey = $config.MasterKeyBase64
+            $secretProtection.MasterKeyDpapiFilePath = ""
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($adminApiKeyDpapiFilePath)) {
+            $adminAuth.ApiKey = ""
+            $adminAuth.ApiKeyDpapiFilePath = $adminApiKeyDpapiFilePath
+        }
+        else {
+            $adminAuth.ApiKey = $config.AdminApiKey
+            $adminAuth.ApiKeyDpapiFilePath = ""
+        }
 
         $localCache.Enabled = [bool]$config.LocalCacheEnabled
         $localCache.AllowSqlFallbackForValidation = [bool]$config.AllowSqlFallbackForValidation
