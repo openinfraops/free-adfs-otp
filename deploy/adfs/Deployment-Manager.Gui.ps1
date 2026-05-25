@@ -9,6 +9,7 @@ $ProgramDataSecretsRoot = "C:\ProgramData\FreeAdfsOtp\secrets"
 $DefaultAdfsMasterKeyDpapiPath = Join-Path $ProgramDataSecretsRoot "adfs-master-key.dpapi.txt"
 $DefaultApiMasterKeyDpapiPath = Join-Path $ProgramDataSecretsRoot "master-key.dpapi.txt"
 $DefaultAdminApiKeyDpapiPath = Join-Path $ProgramDataSecretsRoot "admin-apikey.dpapi.txt"
+$DefaultAdapterApiKeyDpapiPath = Join-Path $ProgramDataSecretsRoot "adapter-apikey.dpapi.txt"
 
 function Test-IsAdministrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -194,6 +195,8 @@ function Write-AdfsNodeConfigFile {
     SecretMasterKeyBase64 = '$(ConvertTo-Psd1SafeString $Config.SecretMasterKeyBase64)'
     SecretMasterKeyDpapiFilePath = '$(ConvertTo-Psd1SafeString $Config.SecretMasterKeyDpapiFilePath)'
     ApiBaseUrl = '$(ConvertTo-Psd1SafeString $Config.ApiBaseUrl)'
+    AdapterApiKey = '$(ConvertTo-Psd1SafeString $Config.AdapterApiKey)'
+    AdapterApiKeyDpapiFilePath = '$(ConvertTo-Psd1SafeString $Config.AdapterApiKeyDpapiFilePath)'
     EnrollmentPortalBaseUrl = '$(ConvertTo-Psd1SafeString $Config.EnrollmentPortalBaseUrl)'
     RequireExternalOnly = $(ConvertTo-Psd1BoolString ([bool]$Config.RequireExternalOnly))
     ApplyGlobalRule = $(ConvertTo-Psd1BoolString ([bool]$Config.ApplyGlobalRule))
@@ -229,6 +232,8 @@ function Write-LocalApiConfigFile {
     MasterKeyDpapiFilePath = '$(ConvertTo-Psd1SafeString $Config.MasterKeyDpapiFilePath)'
     AdminApiKey = '$(ConvertTo-Psd1SafeString $Config.AdminApiKey)'
     AdminApiKeyDpapiFilePath = '$(ConvertTo-Psd1SafeString $Config.AdminApiKeyDpapiFilePath)'
+    AdapterApiKey = '$(ConvertTo-Psd1SafeString $Config.AdapterApiKey)'
+    AdapterApiKeyDpapiFilePath = '$(ConvertTo-Psd1SafeString $Config.AdapterApiKeyDpapiFilePath)'
 
     LocalCacheEnabled = $(ConvertTo-Psd1BoolString ([bool]$Config.LocalCacheEnabled))
     AllowSqlFallbackForValidation = $(ConvertTo-Psd1BoolString ([bool]$Config.AllowSqlFallbackForValidation))
@@ -311,6 +316,16 @@ function Show-AdfsConfigDialog {
         $apiBaseDefault = [string]$existingConfig.ApiBaseUrl
     }
 
+    $adapterApiKeyDefault = ""
+    if ($existingConfig -and $existingConfig.ContainsKey("AdapterApiKey") -and -not [string]::IsNullOrWhiteSpace([string]$existingConfig.AdapterApiKey)) {
+        $adapterApiKeyDefault = [string]$existingConfig.AdapterApiKey
+    }
+
+    $adapterApiKeyDpapiPathDefault = $DefaultAdapterApiKeyDpapiPath
+    if ($existingConfig -and $existingConfig.ContainsKey("AdapterApiKeyDpapiFilePath") -and -not [string]::IsNullOrWhiteSpace([string]$existingConfig.AdapterApiKeyDpapiFilePath)) {
+        $adapterApiKeyDpapiPathDefault = [string]$existingConfig.AdapterApiKeyDpapiFilePath
+    }
+
     $enrollmentPortalDefault = "https://otp-enroll.contoso.local/enroll"
     if ($existingConfig -and $existingConfig.ContainsKey("EnrollmentPortalBaseUrl") -and -not [string]::IsNullOrWhiteSpace([string]$existingConfig.EnrollmentPortalBaseUrl)) {
         $enrollmentPortalDefault = [string]$existingConfig.EnrollmentPortalBaseUrl
@@ -339,8 +354,8 @@ function Show-AdfsConfigDialog {
     $dialog = New-Object System.Windows.Forms.Form
     $dialog.Text = "ADFS config editor"
     $dialog.StartPosition = "CenterParent"
-    $dialog.Size = New-Object System.Drawing.Size(860, 670)
-    $dialog.MinimumSize = New-Object System.Drawing.Size(860, 670)
+    $dialog.Size = New-Object System.Drawing.Size(860, 740)
+    $dialog.MinimumSize = New-Object System.Drawing.Size(860, 740)
 
     $lblConfigPath = New-Object System.Windows.Forms.Label
     $lblConfigPath.Text = "ConfigPath (reutilisable pour setup/update)"
@@ -452,55 +467,85 @@ function Show-AdfsConfigDialog {
     $tbApiBaseUrl.Text = $apiBaseDefault
     $dialog.Controls.Add($tbApiBaseUrl)
 
+    $lblAdapterApiKey = New-Object System.Windows.Forms.Label
+    $lblAdapterApiKey.Text = "AdapterApiKey (mode Api, optional if DPAPI path set)"
+    $lblAdapterApiKey.Location = New-Object System.Drawing.Point -ArgumentList 20, 428
+    $lblAdapterApiKey.AutoSize = $true
+    $dialog.Controls.Add($lblAdapterApiKey)
+
+    $tbAdapterApiKey = New-Object System.Windows.Forms.TextBox
+    $tbAdapterApiKey.Location = New-Object System.Drawing.Point -ArgumentList 20, 448
+    $tbAdapterApiKey.Width = 800
+    $tbAdapterApiKey.Text = $adapterApiKeyDefault
+    $dialog.Controls.Add($tbAdapterApiKey)
+
+    $lblAdapterApiKeyDpapiPath = New-Object System.Windows.Forms.Label
+    $lblAdapterApiKeyDpapiPath.Text = "AdapterApiKeyDpapiFilePath (mode Api, default recommended)"
+    $lblAdapterApiKeyDpapiPath.Location = New-Object System.Drawing.Point -ArgumentList 20, 486
+    $lblAdapterApiKeyDpapiPath.AutoSize = $true
+    $dialog.Controls.Add($lblAdapterApiKeyDpapiPath)
+
+    $tbAdapterApiKeyDpapiPath = New-Object System.Windows.Forms.TextBox
+    $tbAdapterApiKeyDpapiPath.Location = New-Object System.Drawing.Point -ArgumentList 20, 506
+    $tbAdapterApiKeyDpapiPath.Width = 660
+    $tbAdapterApiKeyDpapiPath.Text = $adapterApiKeyDpapiPathDefault
+    $dialog.Controls.Add($tbAdapterApiKeyDpapiPath)
+
+    $btnBrowseAdapterApiKeyDpapiPath = New-Object System.Windows.Forms.Button
+    $btnBrowseAdapterApiKeyDpapiPath.Text = "Browse..."
+    $btnBrowseAdapterApiKeyDpapiPath.Location = New-Object System.Drawing.Point -ArgumentList 690, 504
+    $btnBrowseAdapterApiKeyDpapiPath.Size = New-Object System.Drawing.Size(130, 26)
+    $dialog.Controls.Add($btnBrowseAdapterApiKeyDpapiPath)
+
     $lblEnrollmentPortal = New-Object System.Windows.Forms.Label
     $lblEnrollmentPortal.Text = "EnrollmentPortalBaseUrl"
-    $lblEnrollmentPortal.Location = New-Object System.Drawing.Point -ArgumentList 20, 428
+    $lblEnrollmentPortal.Location = New-Object System.Drawing.Point -ArgumentList 20, 544
     $lblEnrollmentPortal.AutoSize = $true
     $dialog.Controls.Add($lblEnrollmentPortal)
 
     $tbEnrollmentPortal = New-Object System.Windows.Forms.TextBox
-    $tbEnrollmentPortal.Location = New-Object System.Drawing.Point -ArgumentList 20, 448
+    $tbEnrollmentPortal.Location = New-Object System.Drawing.Point -ArgumentList 20, 564
     $tbEnrollmentPortal.Width = 800
     $tbEnrollmentPortal.Text = $enrollmentPortalDefault
     $dialog.Controls.Add($tbEnrollmentPortal)
 
     $chkRequireExternalOnly = New-Object System.Windows.Forms.CheckBox
     $chkRequireExternalOnly.Text = "RequireExternalOnly"
-    $chkRequireExternalOnly.Location = New-Object System.Drawing.Point -ArgumentList 20, 488
+    $chkRequireExternalOnly.Location = New-Object System.Drawing.Point -ArgumentList 20, 604
     $chkRequireExternalOnly.AutoSize = $true
     $chkRequireExternalOnly.Checked = $requireExternalOnlyDefault
     $dialog.Controls.Add($chkRequireExternalOnly)
 
     $chkApplyGlobalRule = New-Object System.Windows.Forms.CheckBox
     $chkApplyGlobalRule.Text = "ApplyGlobalRule"
-    $chkApplyGlobalRule.Location = New-Object System.Drawing.Point -ArgumentList 220, 488
+    $chkApplyGlobalRule.Location = New-Object System.Drawing.Point -ArgumentList 220, 604
     $chkApplyGlobalRule.AutoSize = $true
     $chkApplyGlobalRule.Checked = $applyGlobalRuleDefault
     $dialog.Controls.Add($chkApplyGlobalRule)
 
     $chkForceReregister = New-Object System.Windows.Forms.CheckBox
     $chkForceReregister.Text = "ForceReregister"
-    $chkForceReregister.Location = New-Object System.Drawing.Point -ArgumentList 400, 488
+    $chkForceReregister.Location = New-Object System.Drawing.Point -ArgumentList 400, 604
     $chkForceReregister.AutoSize = $true
     $chkForceReregister.Checked = $forceReregisterDefault
     $dialog.Controls.Add($chkForceReregister)
 
     $chkRestartAdfs = New-Object System.Windows.Forms.CheckBox
     $chkRestartAdfs.Text = "RestartAdfsService"
-    $chkRestartAdfs.Location = New-Object System.Drawing.Point -ArgumentList 580, 488
+    $chkRestartAdfs.Location = New-Object System.Drawing.Point -ArgumentList 580, 604
     $chkRestartAdfs.AutoSize = $true
     $chkRestartAdfs.Checked = $restartAdfsDefault
     $dialog.Controls.Add($chkRestartAdfs)
 
     $btnSave = New-Object System.Windows.Forms.Button
     $btnSave.Text = "Save config"
-    $btnSave.Location = New-Object System.Drawing.Point -ArgumentList 20, 534
+    $btnSave.Location = New-Object System.Drawing.Point -ArgumentList 20, 650
     $btnSave.Size = New-Object System.Drawing.Size(150, 34)
     $dialog.Controls.Add($btnSave)
 
     $btnCancel = New-Object System.Windows.Forms.Button
     $btnCancel.Text = "Cancel"
-    $btnCancel.Location = New-Object System.Drawing.Point -ArgumentList 182, 534
+    $btnCancel.Location = New-Object System.Drawing.Point -ArgumentList 182, 650
     $btnCancel.Size = New-Object System.Drawing.Size(150, 34)
     $dialog.Controls.Add($btnCancel)
 
@@ -519,6 +564,11 @@ function Show-AdfsConfigDialog {
 
         $lblApiBaseUrl.Enabled = -not $isSqlDirect
         $tbApiBaseUrl.Enabled = -not $isSqlDirect
+        $lblAdapterApiKey.Enabled = -not $isSqlDirect
+        $tbAdapterApiKey.Enabled = -not $isSqlDirect
+        $lblAdapterApiKeyDpapiPath.Enabled = -not $isSqlDirect
+        $tbAdapterApiKeyDpapiPath.Enabled = -not $isSqlDirect
+        $btnBrowseAdapterApiKeyDpapiPath.Enabled = -not $isSqlDirect
     }
 
     $cbMode.Add_SelectedIndexChanged($refreshModeView)
@@ -542,6 +592,13 @@ function Show-AdfsConfigDialog {
         $selected = Show-SelectFilePath -InitialPath $tbSecretDpapiPath.Text -Title "Select DPAPI secret file" -Filter "DPAPI secret file (*.dpapi.txt)|*.dpapi.txt|Text files (*.txt)|*.txt|All files (*.*)|*.*"
         if (-not [string]::IsNullOrWhiteSpace($selected)) {
             $tbSecretDpapiPath.Text = $selected
+        }
+    })
+
+    $btnBrowseAdapterApiKeyDpapiPath.Add_Click({
+        $selected = Show-SelectFilePath -InitialPath $tbAdapterApiKeyDpapiPath.Text -Title "Select adapter API key DPAPI file" -Filter "DPAPI secret file (*.dpapi.txt)|*.dpapi.txt|Text files (*.txt)|*.txt|All files (*.*)|*.*" -SaveDialog
+        if (-not [string]::IsNullOrWhiteSpace($selected)) {
+            $tbAdapterApiKeyDpapiPath.Text = $selected
         }
     })
 
@@ -575,6 +632,11 @@ function Show-AdfsConfigDialog {
                 [System.Windows.Forms.MessageBox]::Show("In Api mode, ApiBaseUrl is required.", "Validation", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null
                 return
             }
+
+            if ([string]::IsNullOrWhiteSpace($tbAdapterApiKey.Text) -and [string]::IsNullOrWhiteSpace($tbAdapterApiKeyDpapiPath.Text)) {
+                [System.Windows.Forms.MessageBox]::Show("In Api mode, provide AdapterApiKey or AdapterApiKeyDpapiFilePath.", "Validation", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null
+                return
+            }
         }
 
         $dialog.Tag = @{
@@ -585,6 +647,8 @@ function Show-AdfsConfigDialog {
             SecretMasterKeyBase64 = if ($selectedMode -eq "SqlDirect") { $tbSecretMasterKey.Text.Trim() } else { "" }
             SecretMasterKeyDpapiFilePath = if ($selectedMode -eq "SqlDirect") { $tbSecretDpapiPath.Text.Trim() } else { "" }
             ApiBaseUrl = if ($selectedMode -eq "Api") { $tbApiBaseUrl.Text.Trim() } else { "" }
+            AdapterApiKey = if ($selectedMode -eq "Api") { $tbAdapterApiKey.Text.Trim() } else { "" }
+            AdapterApiKeyDpapiFilePath = if ($selectedMode -eq "Api") { $tbAdapterApiKeyDpapiPath.Text.Trim() } else { "" }
             EnrollmentPortalBaseUrl = $tbEnrollmentPortal.Text.Trim()
             RequireExternalOnly = $chkRequireExternalOnly.Checked
             ApplyGlobalRule = $chkApplyGlobalRule.Checked
@@ -624,8 +688,8 @@ function Show-LocalApiConfigDialog {
     $dialog = New-Object System.Windows.Forms.Form
     $dialog.Text = "Local API config editor"
     $dialog.StartPosition = "CenterParent"
-    $dialog.Size = New-Object System.Drawing.Size(920, 780)
-    $dialog.MinimumSize = New-Object System.Drawing.Size(920, 780)
+    $dialog.Size = New-Object System.Drawing.Size(920, 860)
+    $dialog.MinimumSize = New-Object System.Drawing.Size(920, 860)
 
     $labels = @(
         "ConfigPath",
@@ -639,6 +703,8 @@ function Show-LocalApiConfigDialog {
         "MasterKeyDpapiFilePath",
         "AdminApiKey",
         "AdminApiKeyDpapiFilePath",
+        "AdapterApiKey",
+        "AdapterApiKeyDpapiFilePath",
         "LocalCacheDatabasePath",
         "PeriodicSyncIntervalSeconds",
         "ServiceAccount",
@@ -655,6 +721,8 @@ function Show-LocalApiConfigDialog {
         "Server=localhost;Database=FreeAdfsOtp;Integrated Security=true;TrustServerCertificate=true;Connect Timeout=3;ConnectRetryCount=0;Pooling=true;Min Pool Size=10;Max Pool Size=200;Application Name=freeADFSOtp-LocalApi;",
         "",
         $DefaultApiMasterKeyDpapiPath,
+        "",
+        $DefaultAdapterApiKeyDpapiPath,
         "",
         $DefaultAdminApiKeyDpapiPath,
         "cache/freeadfsotp-node-cache.db",
@@ -674,10 +742,12 @@ function Show-LocalApiConfigDialog {
         if ($existingConfig.ContainsKey("MasterKeyDpapiFilePath") -and -not [string]::IsNullOrWhiteSpace([string]$existingConfig.MasterKeyDpapiFilePath)) { $defaults[8] = [string]$existingConfig.MasterKeyDpapiFilePath }
         if ($existingConfig.ContainsKey("AdminApiKey") -and -not [string]::IsNullOrWhiteSpace([string]$existingConfig.AdminApiKey)) { $defaults[9] = [string]$existingConfig.AdminApiKey }
         if ($existingConfig.ContainsKey("AdminApiKeyDpapiFilePath") -and -not [string]::IsNullOrWhiteSpace([string]$existingConfig.AdminApiKeyDpapiFilePath)) { $defaults[10] = [string]$existingConfig.AdminApiKeyDpapiFilePath }
-        if ($existingConfig.ContainsKey("LocalCacheDatabasePath") -and -not [string]::IsNullOrWhiteSpace([string]$existingConfig.LocalCacheDatabasePath)) { $defaults[11] = [string]$existingConfig.LocalCacheDatabasePath }
-        if ($existingConfig.ContainsKey("PeriodicSyncIntervalSeconds")) { $defaults[12] = [string]$existingConfig.PeriodicSyncIntervalSeconds }
-        if ($existingConfig.ContainsKey("ServiceAccount") -and -not [string]::IsNullOrWhiteSpace([string]$existingConfig.ServiceAccount)) { $defaults[13] = [string]$existingConfig.ServiceAccount }
-        if ($existingConfig.ContainsKey("ServiceAccountPassword")) { $defaults[14] = [string]$existingConfig.ServiceAccountPassword }
+        if ($existingConfig.ContainsKey("AdapterApiKey") -and -not [string]::IsNullOrWhiteSpace([string]$existingConfig.AdapterApiKey)) { $defaults[11] = [string]$existingConfig.AdapterApiKey }
+        if ($existingConfig.ContainsKey("AdapterApiKeyDpapiFilePath") -and -not [string]::IsNullOrWhiteSpace([string]$existingConfig.AdapterApiKeyDpapiFilePath)) { $defaults[12] = [string]$existingConfig.AdapterApiKeyDpapiFilePath }
+        if ($existingConfig.ContainsKey("LocalCacheDatabasePath") -and -not [string]::IsNullOrWhiteSpace([string]$existingConfig.LocalCacheDatabasePath)) { $defaults[13] = [string]$existingConfig.LocalCacheDatabasePath }
+        if ($existingConfig.ContainsKey("PeriodicSyncIntervalSeconds")) { $defaults[14] = [string]$existingConfig.PeriodicSyncIntervalSeconds }
+        if ($existingConfig.ContainsKey("ServiceAccount") -and -not [string]::IsNullOrWhiteSpace([string]$existingConfig.ServiceAccount)) { $defaults[15] = [string]$existingConfig.ServiceAccount }
+        if ($existingConfig.ContainsKey("ServiceAccountPassword")) { $defaults[16] = [string]$existingConfig.ServiceAccountPassword }
     }
 
     $textBoxes = @{}
@@ -702,6 +772,7 @@ function Show-LocalApiConfigDialog {
     $textBoxes["DotnetPath"].Width = 540
     $textBoxes["MasterKeyDpapiFilePath"].Width = 540
     $textBoxes["AdminApiKeyDpapiFilePath"].Width = 540
+    $textBoxes["AdapterApiKeyDpapiFilePath"].Width = 540
     $textBoxes["LocalCacheDatabasePath"].Width = 540
 
     $btnBrowseLocalConfigPath = New-Object System.Windows.Forms.Button
@@ -746,36 +817,42 @@ function Show-LocalApiConfigDialog {
     $btnBrowseAdminApiKeyDpapiPath.Size = New-Object System.Drawing.Size(90, 26)
     $dialog.Controls.Add($btnBrowseAdminApiKeyDpapiPath)
 
+    $btnBrowseAdapterApiKeyDpapiPath = New-Object System.Windows.Forms.Button
+    $btnBrowseAdapterApiKeyDpapiPath.Text = "Browse..."
+    $btnBrowseAdapterApiKeyDpapiPath.Location = New-Object System.Drawing.Point -ArgumentList 800, ($textBoxes["AdapterApiKeyDpapiFilePath"].Top - 1)
+    $btnBrowseAdapterApiKeyDpapiPath.Size = New-Object System.Drawing.Size(90, 26)
+    $dialog.Controls.Add($btnBrowseAdapterApiKeyDpapiPath)
+
     $chkLocalCacheEnabled = New-Object System.Windows.Forms.CheckBox
     $chkLocalCacheEnabled.Text = "LocalCacheEnabled"
-    $chkLocalCacheEnabled.Location = New-Object System.Drawing.Point -ArgumentList 20, 606
+    $chkLocalCacheEnabled.Location = New-Object System.Drawing.Point -ArgumentList 20, 682
     $chkLocalCacheEnabled.AutoSize = $true
     $chkLocalCacheEnabled.Checked = if ($existingConfig -and $existingConfig.ContainsKey("LocalCacheEnabled")) { [bool]$existingConfig.LocalCacheEnabled } else { $true }
     $dialog.Controls.Add($chkLocalCacheEnabled)
 
     $chkAllowSqlFallback = New-Object System.Windows.Forms.CheckBox
     $chkAllowSqlFallback.Text = "AllowSqlFallbackForValidation"
-    $chkAllowSqlFallback.Location = New-Object System.Drawing.Point -ArgumentList 180, 606
+    $chkAllowSqlFallback.Location = New-Object System.Drawing.Point -ArgumentList 180, 682
     $chkAllowSqlFallback.AutoSize = $true
     $chkAllowSqlFallback.Checked = if ($existingConfig -and $existingConfig.ContainsKey("AllowSqlFallbackForValidation")) { [bool]$existingConfig.AllowSqlFallbackForValidation } else { $true }
     $dialog.Controls.Add($chkAllowSqlFallback)
 
     $chkPeriodicSyncEnabled = New-Object System.Windows.Forms.CheckBox
     $chkPeriodicSyncEnabled.Text = "PeriodicSyncEnabled"
-    $chkPeriodicSyncEnabled.Location = New-Object System.Drawing.Point -ArgumentList 430, 606
+    $chkPeriodicSyncEnabled.Location = New-Object System.Drawing.Point -ArgumentList 430, 682
     $chkPeriodicSyncEnabled.AutoSize = $true
     $chkPeriodicSyncEnabled.Checked = if ($existingConfig -and $existingConfig.ContainsKey("PeriodicSyncEnabled")) { [bool]$existingConfig.PeriodicSyncEnabled } else { $true }
     $dialog.Controls.Add($chkPeriodicSyncEnabled)
 
     $btnSave = New-Object System.Windows.Forms.Button
     $btnSave.Text = "Save config"
-    $btnSave.Location = New-Object System.Drawing.Point -ArgumentList 20, 644
+    $btnSave.Location = New-Object System.Drawing.Point -ArgumentList 20, 720
     $btnSave.Size = New-Object System.Drawing.Size(150, 34)
     $dialog.Controls.Add($btnSave)
 
     $btnCancel = New-Object System.Windows.Forms.Button
     $btnCancel.Text = "Cancel"
-    $btnCancel.Location = New-Object System.Drawing.Point -ArgumentList 182, 644
+    $btnCancel.Location = New-Object System.Drawing.Point -ArgumentList 182, 720
     $btnCancel.Size = New-Object System.Drawing.Size(150, 34)
     $dialog.Controls.Add($btnCancel)
 
@@ -830,6 +907,13 @@ function Show-LocalApiConfigDialog {
         }
     })
 
+    $btnBrowseAdapterApiKeyDpapiPath.Add_Click({
+        $selected = Show-SelectFilePath -InitialPath $textBoxes["AdapterApiKeyDpapiFilePath"].Text -Title "Select adapter API key DPAPI file" -Filter "DPAPI secret file (*.dpapi.txt)|*.dpapi.txt|Text files (*.txt)|*.txt|All files (*.*)|*.*" -SaveDialog
+        if (-not [string]::IsNullOrWhiteSpace($selected)) {
+            $textBoxes["AdapterApiKeyDpapiFilePath"].Text = $selected
+        }
+    })
+
     $btnSave.Add_Click({
         $required = @(
             "ConfigPath", "ApiZipPath", "InstallRoot", "ServiceName", "DotnetPath", "ListenUrl",
@@ -872,6 +956,8 @@ function Show-LocalApiConfigDialog {
             MasterKeyDpapiFilePath = $textBoxes["MasterKeyDpapiFilePath"].Text.Trim()
             AdminApiKey = $textBoxes["AdminApiKey"].Text.Trim()
             AdminApiKeyDpapiFilePath = $textBoxes["AdminApiKeyDpapiFilePath"].Text.Trim()
+            AdapterApiKey = $textBoxes["AdapterApiKey"].Text.Trim()
+            AdapterApiKeyDpapiFilePath = $textBoxes["AdapterApiKeyDpapiFilePath"].Text.Trim()
             LocalCacheEnabled = $chkLocalCacheEnabled.Checked
             AllowSqlFallbackForValidation = $chkAllowSqlFallback.Checked
             LocalCacheDatabasePath = $textBoxes["LocalCacheDatabasePath"].Text.Trim()

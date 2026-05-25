@@ -15,20 +15,24 @@ public sealed class OtpAdapterSkeleton
 
     private readonly HttpClient _httpClient;
     private readonly Uri _apiBaseUrl;
+    private readonly string _adapterApiKey;
 
-    public OtpAdapterSkeleton(Uri apiBaseUrl, HttpClient httpClient = null)
+    public OtpAdapterSkeleton(Uri apiBaseUrl, HttpClient httpClient = null, string adapterApiKey = null)
     {
         _apiBaseUrl = apiBaseUrl;
         _httpClient = httpClient ?? new HttpClient
         {
             Timeout = TimeSpan.FromSeconds(3)
         };
+        _adapterApiKey = adapterApiKey ?? string.Empty;
     }
 
     public async Task<bool> IsUserEnrolledAsync(string upn)
     {
         var url = new Uri(_apiBaseUrl, $"/otp/enrollment-status/{Uri.EscapeDataString(upn)}");
-        using var response = await _httpClient.GetAsync(url).ConfigureAwait(false);
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        AddAdapterAuthHeader(request);
+        using var response = await _httpClient.SendAsync(request).ConfigureAwait(false);
         var payload = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
 
         if (!response.IsSuccessStatusCode)
@@ -50,8 +54,10 @@ public sealed class OtpAdapterSkeleton
             (correlationId.HasValue ? $"\"correlationId\":\"{correlationId.Value:D}\"" : "\"correlationId\":null") +
             "}";
 
-        using var content = new StringContent(json, Encoding.UTF8, "application/json");
-        using var response = await _httpClient.PostAsync(url, content).ConfigureAwait(false);
+        using var request = new HttpRequestMessage(HttpMethod.Post, url);
+        request.Content = new StringContent(json, Encoding.UTF8, "application/json");
+        AddAdapterAuthHeader(request);
+        using var response = await _httpClient.SendAsync(request).ConfigureAwait(false);
         var payload = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
 
         if (!response.IsSuccessStatusCode)
@@ -78,5 +84,13 @@ public sealed class OtpAdapterSkeleton
     private static string EscapeJson(string value)
     {
         return value.Replace("\\", "\\\\").Replace("\"", "\\\"");
+    }
+
+    private void AddAdapterAuthHeader(HttpRequestMessage request)
+    {
+        if (!string.IsNullOrWhiteSpace(_adapterApiKey))
+        {
+            request.Headers.TryAddWithoutValidation("X-Adapter-ApiKey", _adapterApiKey);
+        }
     }
 }

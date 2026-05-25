@@ -50,6 +50,11 @@ var resolvedAdminApiKey = SecretValueResolver.ResolveOptional(
     "AdminAuth:ApiKey",
     "AdminAuth:ApiKeyDpapiFilePath");
 
+var resolvedAdapterApiKey = SecretValueResolver.ResolveOptional(
+    builder.Configuration,
+    "AdapterAuth:ApiKey",
+    "AdapterAuth:ApiKeyDpapiFilePath");
+
 builder.Services.AddSingleton<ISecretProtector>(_ =>
 {
     return new AesSecretProtector(resolvedMasterKey);
@@ -64,8 +69,13 @@ app.UseSwaggerUI();
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok", utc = DateTimeOffset.UtcNow }));
 
-app.MapGet("/otp/enrollment-status/{upn}", async (string upn, IOtpRepository repository, CancellationToken ct) =>
+app.MapGet("/otp/enrollment-status/{upn}", async (HttpContext httpContext, string upn, IOtpRepository repository, CancellationToken ct) =>
 {
+    if (!IsAdapterAuthorized(httpContext, resolvedAdapterApiKey))
+    {
+        return Results.Unauthorized();
+    }
+
     var user = await repository.GetUserByUpnAsync(upn, ct);
     return Results.Ok(new
     {
@@ -85,6 +95,11 @@ app.MapPost("/otp/validate", async (
     IConfiguration configuration,
     CancellationToken ct) =>
 {
+    if (!IsAdapterAuthorized(httpContext, resolvedAdapterApiKey))
+    {
+        return Results.Unauthorized();
+    }
+
     var clientIp = GetClientIp(httpContext);
     var now = clock.UtcNow;
 
@@ -302,6 +317,30 @@ static bool IsAdminAuthorized(HttpContext httpContext, string? expectedApiKey)
     }
 
     if (!httpContext.Request.Headers.TryGetValue("X-Admin-ApiKey", out var providedHeader))
+    {
+        return false;
+    }
+
+    var providedApiKey = providedHeader.ToString();
+    var providedBytes = Encoding.UTF8.GetBytes(providedApiKey);
+    var expectedBytes = Encoding.UTF8.GetBytes(expectedApiKey);
+    if (providedBytes.Length != expectedBytes.Length)
+    {
+        return false;
+    }
+
+    return CryptographicOperations.FixedTimeEquals(providedBytes, expectedBytes);
+}
+
+static bool IsAdapterAuthorized(HttpContext httpContext, string? expectedApiKey)
+{
+    // Backward compatibility: if adapter auth key is not configured, keep current behavior.
+    if (string.IsNullOrWhiteSpace(expectedApiKey))
+    {
+        return true;
+    }
+
+    if (!httpContext.Request.Headers.TryGetValue("X-Adapter-ApiKey", out var providedHeader))
     {
         return false;
     }

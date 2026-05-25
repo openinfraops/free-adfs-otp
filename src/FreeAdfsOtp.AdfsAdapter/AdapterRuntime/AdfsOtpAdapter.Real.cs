@@ -22,6 +22,8 @@ public sealed class FreeAdfsOtpAuthenticationAdapter : IAuthenticationAdapter
     private string _sqlConnectionString;
     private string _secretMasterKeyBase64;
     private string _secretMasterKeyDpapiFilePath;
+    private string _adapterApiKey;
+    private string _adapterApiKeyDpapiFilePath;
     private string _backendMode;
 
     public FreeAdfsOtpAuthenticationAdapter()
@@ -32,7 +34,9 @@ public sealed class FreeAdfsOtpAuthenticationAdapter : IAuthenticationAdapter
         _sqlConnectionString = string.Empty;
         _secretMasterKeyBase64 = string.Empty;
         _secretMasterKeyDpapiFilePath = string.Empty;
-        _backend = new ApiOtpRuntimeBackend(new OtpAdapterSkeleton(_apiBaseUrl));
+        _adapterApiKey = string.Empty;
+        _adapterApiKeyDpapiFilePath = string.Empty;
+        _backend = new ApiOtpRuntimeBackend(new OtpAdapterSkeleton(_apiBaseUrl, null, string.Empty));
     }
 
     public IAuthenticationAdapterMetadata Metadata => new FreeAdfsOtpMetadata();
@@ -92,6 +96,8 @@ public sealed class FreeAdfsOtpAuthenticationAdapter : IAuthenticationAdapter
         var sqlConnectionString = ExtractTagValue(data, "SqlConnectionString");
         var secretMasterKeyBase64 = ExtractTagValue(data, "SecretMasterKeyBase64");
         var secretMasterKeyDpapiFilePath = ExtractTagValue(data, "SecretMasterKeyDpapiFilePath");
+        var adapterApiKey = ExtractTagValue(data, "AdapterApiKey");
+        var adapterApiKeyDpapiFilePath = ExtractTagValue(data, "AdapterApiKeyDpapiFilePath");
 
         if (!string.IsNullOrWhiteSpace(mode))
         {
@@ -123,6 +129,16 @@ public sealed class FreeAdfsOtpAuthenticationAdapter : IAuthenticationAdapter
             _secretMasterKeyDpapiFilePath = secretMasterKeyDpapiFilePath.Trim();
         }
 
+        if (!string.IsNullOrWhiteSpace(adapterApiKey))
+        {
+            _adapterApiKey = adapterApiKey.Trim();
+        }
+
+        if (!string.IsNullOrWhiteSpace(adapterApiKeyDpapiFilePath))
+        {
+            _adapterApiKeyDpapiFilePath = adapterApiKeyDpapiFilePath.Trim();
+        }
+
         if (_backendMode.Equals("SqlDirect", StringComparison.OrdinalIgnoreCase))
         {
             var resolvedSecretMasterKeyBase64 = ResolveSecretMasterKeyBase64(_secretMasterKeyBase64, _secretMasterKeyDpapiFilePath);
@@ -130,7 +146,8 @@ public sealed class FreeAdfsOtpAuthenticationAdapter : IAuthenticationAdapter
         }
         else
         {
-            _backend = new ApiOtpRuntimeBackend(new OtpAdapterSkeleton(_apiBaseUrl));
+            var resolvedAdapterApiKey = ResolveOptionalSecret(_adapterApiKey, _adapterApiKeyDpapiFilePath);
+            _backend = new ApiOtpRuntimeBackend(new OtpAdapterSkeleton(_apiBaseUrl, null, resolvedAdapterApiKey));
         }
     }
 
@@ -333,6 +350,40 @@ public sealed class FreeAdfsOtpAuthenticationAdapter : IAuthenticationAdapter
         }
 
         var expandedPath = Environment.ExpandEnvironmentVariables(secretMasterKeyDpapiFilePath.Trim());
+        if (!Path.IsPathRooted(expandedPath))
+        {
+            expandedPath = Path.GetFullPath(expandedPath);
+        }
+
+        if (!File.Exists(expandedPath))
+        {
+            throw new FileNotFoundException("DPAPI secret file not found.", expandedPath);
+        }
+
+        var protectedPayloadBase64 = File.ReadAllText(expandedPath).Trim();
+        if (string.IsNullOrWhiteSpace(protectedPayloadBase64))
+        {
+            throw new InvalidOperationException("DPAPI secret file is empty: " + expandedPath);
+        }
+
+        var protectedPayload = Convert.FromBase64String(protectedPayloadBase64);
+        var rawSecretBytes = ProtectedData.Unprotect(protectedPayload, null, DataProtectionScope.LocalMachine);
+        return Encoding.UTF8.GetString(rawSecretBytes).Trim();
+    }
+
+    private static string ResolveOptionalSecret(string inlineValue, string dpapiFilePath)
+    {
+        if (!string.IsNullOrWhiteSpace(inlineValue))
+        {
+            return inlineValue.Trim();
+        }
+
+        if (string.IsNullOrWhiteSpace(dpapiFilePath))
+        {
+            return string.Empty;
+        }
+
+        var expandedPath = Environment.ExpandEnvironmentVariables(dpapiFilePath.Trim());
         if (!Path.IsPathRooted(expandedPath))
         {
             expandedPath = Path.GetFullPath(expandedPath);

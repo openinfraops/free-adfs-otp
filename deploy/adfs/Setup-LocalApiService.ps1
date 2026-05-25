@@ -14,6 +14,7 @@ $RegistryRootPath = "HKLM:\SOFTWARE\FreeAdfsOtp"
 $LocalApiRegistryPath = Join-Path $RegistryRootPath "LocalApi"
 $DefaultMasterKeyDpapiFilePath = "C:\ProgramData\FreeAdfsOtp\secrets\master-key.dpapi.txt"
 $DefaultAdminApiKeyDpapiFilePath = "C:\ProgramData\FreeAdfsOtp\secrets\admin-apikey.dpapi.txt"
+$DefaultAdapterApiKeyDpapiFilePath = "C:\ProgramData\FreeAdfsOtp\secrets\adapter-apikey.dpapi.txt"
 
 function Test-IsAdministrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -56,6 +57,8 @@ function Write-ConfigFile {
     MasterKeyDpapiFilePath = '$(ConvertTo-Psd1SafeString $Config.MasterKeyDpapiFilePath)'
     AdminApiKey = '$(ConvertTo-Psd1SafeString $Config.AdminApiKey)'
     AdminApiKeyDpapiFilePath = '$(ConvertTo-Psd1SafeString $Config.AdminApiKeyDpapiFilePath)'
+    AdapterApiKey = '$(ConvertTo-Psd1SafeString $Config.AdapterApiKey)'
+    AdapterApiKeyDpapiFilePath = '$(ConvertTo-Psd1SafeString $Config.AdapterApiKeyDpapiFilePath)'
 
     LocalCacheEnabled = `$$($Config.LocalCacheEnabled)
     AllowSqlFallbackForValidation = `$$($Config.AllowSqlFallbackForValidation)
@@ -100,6 +103,54 @@ function Invoke-IfNotDryRun {
     }
 
     & $Action
+}
+
+function New-RandomSecretBase64 {
+    param([int]$ByteLength = 32)
+
+    $bytes = New-Object byte[] $ByteLength
+    [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+    return [Convert]::ToBase64String($bytes)
+}
+
+function Ensure-DpapiSecretFile {
+    param(
+        [string]$Path,
+        [string]$SecretValue,
+        [switch]$DryRun
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        throw "DPAPI secret file path is required."
+    }
+
+    if ([string]::IsNullOrWhiteSpace($SecretValue)) {
+        throw "Secret value is required to write a DPAPI secret file."
+    }
+
+    $targetPath = [Environment]::ExpandEnvironmentVariables($Path.Trim())
+    if (-not [System.IO.Path]::IsPathRooted($targetPath)) {
+        $targetPath = Join-Path (Get-Location) $targetPath
+    }
+
+    if (Test-Path $targetPath) {
+        return $targetPath
+    }
+
+    if ($DryRun) {
+        Write-Host "[DRY-RUN] Would create DPAPI secret file: $targetPath"
+        return $targetPath
+    }
+
+    $directory = Split-Path -Parent $targetPath
+    if (-not [string]::IsNullOrWhiteSpace($directory)) {
+        New-Item -ItemType Directory -Path $directory -Force | Out-Null
+    }
+
+    $secretBytes = [Text.Encoding]::UTF8.GetBytes($SecretValue)
+    $protectedBytes = [System.Security.Cryptography.ProtectedData]::Protect($secretBytes, $null, [System.Security.Cryptography.DataProtectionScope]::LocalMachine)
+    [IO.File]::WriteAllText($targetPath, [Convert]::ToBase64String($protectedBytes), [Text.Encoding]::UTF8)
+    return $targetPath
 }
 
 function Set-RegistryInstallMetadata {
@@ -240,6 +291,13 @@ if ($Interactive -or -not $configExists) {
     }
     if ([string]::IsNullOrWhiteSpace($adminApiKey) -and [string]::IsNullOrWhiteSpace($adminApiKeyDpapiFilePath)) { throw "AdminApiKey or AdminApiKeyDpapiFilePath is required." }
 
+    $adapterApiKey = Read-Host "AdapterAuth:ApiKey (optional, generated if omitted)"
+    $adapterApiKeyDpapiFilePath = Read-Host "AdapterAuth:ApiKeyDpapiFilePath (optional, default: $DefaultAdapterApiKeyDpapiFilePath)"
+    if ([string]::IsNullOrWhiteSpace($adapterApiKeyDpapiFilePath) -and [string]::IsNullOrWhiteSpace($adapterApiKey)) {
+        $adapterApiKeyDpapiFilePath = $DefaultAdapterApiKeyDpapiFilePath
+        Write-Host "Using default AdapterApiKeyDpapiFilePath: $adapterApiKeyDpapiFilePath"
+    }
+
     $localCacheEnabled = Read-Bool -Prompt "Enable local cache" -Default $true
     $allowSqlFallback = Read-Bool -Prompt "Allow SQL fallback for validation" -Default $true
     $localCacheDbPath = Read-Host "Local cache DB path"; if ([string]::IsNullOrWhiteSpace($localCacheDbPath)) { $localCacheDbPath = "cache/freeadfsotp-node-cache.db" }
@@ -269,6 +327,8 @@ if ($Interactive -or -not $configExists) {
         MasterKeyDpapiFilePath = $masterKeyDpapiFilePath
         AdminApiKey = $adminApiKey
         AdminApiKeyDpapiFilePath = $adminApiKeyDpapiFilePath
+        AdapterApiKey = $adapterApiKey
+        AdapterApiKeyDpapiFilePath = $adapterApiKeyDpapiFilePath
         LocalCacheEnabled = $localCacheEnabled
         AllowSqlFallbackForValidation = $allowSqlFallback
         LocalCacheDatabasePath = $localCacheDbPath
@@ -307,7 +367,22 @@ $dotnetPath = $config.DotnetPath
 $listenUrl = $config.ListenUrl
 $masterKeyDpapiFilePath = if ($config.ContainsKey("MasterKeyDpapiFilePath") -and $null -ne $config.MasterKeyDpapiFilePath) { [string]$config.MasterKeyDpapiFilePath } else { "" }
 $adminApiKeyDpapiFilePath = if ($config.ContainsKey("AdminApiKeyDpapiFilePath") -and $null -ne $config.AdminApiKeyDpapiFilePath) { [string]$config.AdminApiKeyDpapiFilePath } else { "" }
+$adapterApiKey = if ($config.ContainsKey("AdapterApiKey") -and $null -ne $config.AdapterApiKey) { [string]$config.AdapterApiKey } else { "" }
+$adapterApiKeyDpapiFilePath = if ($config.ContainsKey("AdapterApiKeyDpapiFilePath") -and $null -ne $config.AdapterApiKeyDpapiFilePath) { [string]$config.AdapterApiKeyDpapiFilePath } else { "" }
 $appDir = $installRoot
+
+if ([string]::IsNullOrWhiteSpace($adapterApiKey) -and [string]::IsNullOrWhiteSpace($adapterApiKeyDpapiFilePath)) {
+    $adapterApiKeyDpapiFilePath = $DefaultAdapterApiKeyDpapiFilePath
+}
+
+if ([string]::IsNullOrWhiteSpace($adapterApiKey) -and -not [string]::IsNullOrWhiteSpace($adapterApiKeyDpapiFilePath)) {
+    if (-not (Test-Path $adapterApiKeyDpapiFilePath)) {
+        $adapterApiKey = New-RandomSecretBase64 -ByteLength 32
+        $generatedPath = Ensure-DpapiSecretFile -Path $adapterApiKeyDpapiFilePath -SecretValue $adapterApiKey -DryRun:$DryRun
+        Write-Host "Adapter API key generated and written to DPAPI file: $generatedPath"
+        $adapterApiKey = ""
+    }
+}
 
 if (-not (Test-Path $dotnetPath)) {
     throw "dotnet not found: $dotnetPath"
@@ -354,6 +429,16 @@ Invoke-IfNotDryRun -Description "Update appsettings for local API node" -Action 
         else {
             $adminAuth.ApiKey = $config.AdminApiKey
             $adminAuth.ApiKeyDpapiFilePath = ""
+        }
+
+        $adapterAuth = Get-OrAddJsonObjectProperty -Object $json -PropertyName "AdapterAuth"
+        if (-not [string]::IsNullOrWhiteSpace($adapterApiKeyDpapiFilePath)) {
+            $adapterAuth.ApiKey = ""
+            $adapterAuth.ApiKeyDpapiFilePath = $adapterApiKeyDpapiFilePath
+        }
+        else {
+            $adapterAuth.ApiKey = $adapterApiKey
+            $adapterAuth.ApiKeyDpapiFilePath = ""
         }
 
         $localCache.Enabled = [bool]$config.LocalCacheEnabled
