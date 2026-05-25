@@ -111,6 +111,7 @@ Le déploiement AD FS est prévu pour être exécuté sur les serveurs cibles, a
 Entrées principales:
 
 - [deploy/adfs/README.md](deploy/adfs/README.md)
+- [deploy/Setup-FreeAdfsOtp.ps1](deploy/Setup-FreeAdfsOtp.ps1)
 - [deploy/adfs/00-deploy-provider.ps1](deploy/adfs/00-deploy-provider.ps1)
 - [deploy/adfs/99-rollback-provider.ps1](deploy/adfs/99-rollback-provider.ps1)
 

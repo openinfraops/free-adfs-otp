@@ -1,6 +1,13 @@
 <Config>
   <Mode>SqlDirect</Mode>
-  <SqlConnectionString>Server=sql.contoso.local;Database=FreeAdfsOtp;Integrated Security=True;TrustServerCertificate=True;</SqlConnectionString>
+  <!--
+    Recommandations SqlDirect AD FS (fail-fast + pool):
+    - Connect Timeout=3 : echec de connexion rapide en cas d'incident reseau/SQL.
+    - ConnectRetryCount=0 : evite d'allonger la detection par retries client implicites.
+    - Pooling=true + Min/Max Pool Size : stabilise la latence sous charge.
+    - Application Name : facilite le filtrage/correlation cote SQL.
+  -->
+  <SqlConnectionString>Server=sql.contoso.local;Database=FreeAdfsOtp;Integrated Security=True;TrustServerCertificate=True;Connect Timeout=1;ConnectRetryCount=0;ConnectRetryInterval=1;Pooling=true;Min Pool Size=10;Max Pool Size=200;Application Name=freeADFSOtp-ADFS;</SqlConnectionString>
   <SecretMasterKeyBase64>PUT_BASE64_MASTER_KEY_HERE</SecretMasterKeyBase64>
   <EnrollmentPortalBaseUrl>https://otp-enroll.contoso.local/enroll</EnrollmentPortalBaseUrl>
 </Config>

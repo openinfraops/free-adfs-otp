@@ -140,6 +140,7 @@ jobs:
             BuildAdfsRuntime = ($env:BUILD_ADFS_RUNTIME -eq 'true')
             AdapterVersion = $env:ADAPTER_VERSION
             WebVersion = $env:WEB_VERSION
+            CreateBundle = $false
           }
 
           if ($env:SIGN_ADAPTER -eq 'true') {
@@ -153,11 +154,56 @@ jobs:
 
           & .\deploy\package-artifacts.ps1 @params
 
-      - name: Upload ZIP packages
+      - name: Assemble single deployment bundle
+        if: success()
+        shell: pwsh
+        run: |
+          $zipRoot = Join-Path $PWD "artifacts\packages\zip"
+          $bundleRoot = Join-Path $PWD "artifacts\packages\staging\ci-deployment-bundle"
+          $deployTarget = Join-Path $bundleRoot "deploy"
+          $bundleVersion = $env:WEB_VERSION
+          if ([string]::IsNullOrWhiteSpace($bundleVersion)) {
+            throw "WEB_VERSION is empty."
+          }
+
+          $bundleZipName = "freeADFSOTPy-$bundleVersion.zip"
+          $bundleZip = Join-Path $zipRoot $bundleZipName
+
+          if (Test-Path $bundleRoot) {
+            Remove-Item -Recurse -Force $bundleRoot
+          }
+
+          New-Item -ItemType Directory -Path $deployTarget -Force | Out-Null
+
+          Copy-Item -Recurse -Force .\deploy\* $deployTarget
+
+          $requiredSuffixes = @(
+            "api",
+            "enrollment-portal",
+            "admin-portal",
+            "adfs-adapter"
+          )
+
+          foreach ($suffix in $requiredSuffixes) {
+            $zip = Get-ChildItem -Path $zipRoot -Filter "*-$suffix.zip" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            if ($null -eq $zip) {
+              throw "Missing expected package zip for '$suffix' in $zipRoot"
+            }
+
+            Copy-Item -Force $zip.FullName (Join-Path $bundleRoot $zip.Name)
+          }
+
+          if (Test-Path $bundleZip) {
+            Remove-Item -Force $bundleZip
+          }
+
+          Compress-Archive -Path (Join-Path $bundleRoot '*') -DestinationPath $bundleZip -CompressionLevel Optimal
+          Write-Host "Bundle created: $bundleZip"
+
+      - name: Upload deployment bundle
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: build-packages
-          path: |
-            artifacts/packages/zip/*.zip
+          name: deployment-bundle
+          path: artifacts/packages/zip/freeADFSOTPy-*.zip
           if-no-files-found: warn

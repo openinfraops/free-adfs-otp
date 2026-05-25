@@ -49,9 +49,11 @@ function Write-ConfigFile {
 @{
     ProviderName = '$(Escape-Psd1String $Config.ProviderName)'
     TypeName = '$(Escape-Psd1String $Config.TypeName)'
+    Mode = '$(Escape-Psd1String $Config.Mode)'
     AdapterZipPath = '$(Escape-Psd1String $Config.AdapterZipPath)'
     SqlConnectionString = '$(Escape-Psd1String $Config.SqlConnectionString)'
     SecretMasterKeyBase64 = '$(Escape-Psd1String $Config.SecretMasterKeyBase64)'
+    ApiBaseUrl = '$(Escape-Psd1String $Config.ApiBaseUrl)'
     EnrollmentPortalBaseUrl = '$(Escape-Psd1String $Config.EnrollmentPortalBaseUrl)'
     RequireExternalOnly = `$$($Config.RequireExternalOnly)
     ApplyGlobalRule = `$$($Config.ApplyGlobalRule)
@@ -78,6 +80,23 @@ function Read-Bool {
     }
 
     return @("y", "yes", "o", "oui", "1", "true") -contains $raw.Trim().ToLowerInvariant()
+}
+
+function Read-Mode {
+    param([string]$Default = "SqlDirect")
+
+    $raw = Read-Host "Backend mode [SqlDirect/Api] (default: $Default)"
+    if ([string]::IsNullOrWhiteSpace($raw)) {
+        return $Default
+    }
+
+    $normalized = $raw.Trim().ToLowerInvariant()
+    switch ($normalized) {
+        "sqldirect" { return "SqlDirect" }
+        "sql" { return "SqlDirect" }
+        "api" { return "Api" }
+        default { throw "Invalid mode '$raw'. Allowed values: SqlDirect, Api." }
+    }
 }
 
 function Build-SqlConnectionString {
@@ -114,20 +133,52 @@ function Build-SqlConnectionString {
 
 function Build-ProviderConfigXml {
     param(
-                [string]$SqlConnectionString,
-                [string]$SecretMasterKeyBase64,
+        [string]$Mode,
+        [string]$SqlConnectionString,
+        [string]$SecretMasterKeyBase64,
+        [string]$ApiBaseUrl,
         [string]$EnrollmentPortalBaseUrl,
         [string]$DestinationPath
     )
 
-    $xml = @"
+    if ([string]::IsNullOrWhiteSpace($Mode)) {
+        throw "Mode is required."
+    }
+
+    if ($Mode -eq "SqlDirect") {
+        if ([string]::IsNullOrWhiteSpace($SqlConnectionString)) {
+            throw "SqlConnectionString is required for SqlDirect mode."
+        }
+
+        if ([string]::IsNullOrWhiteSpace($SecretMasterKeyBase64)) {
+            throw "SecretMasterKeyBase64 is required for SqlDirect mode."
+        }
+
+        $xml = @"
 <Config>
-    <Mode>SqlDirect</Mode>
+    <Mode>$Mode</Mode>
     <SqlConnectionString>$SqlConnectionString</SqlConnectionString>
     <SecretMasterKeyBase64>$SecretMasterKeyBase64</SecretMasterKeyBase64>
-  <EnrollmentPortalBaseUrl>$EnrollmentPortalBaseUrl</EnrollmentPortalBaseUrl>
+    <EnrollmentPortalBaseUrl>$EnrollmentPortalBaseUrl</EnrollmentPortalBaseUrl>
 </Config>
 "@
+    }
+    elseif ($Mode -eq "Api") {
+        if ([string]::IsNullOrWhiteSpace($ApiBaseUrl)) {
+            throw "ApiBaseUrl is required for Api mode."
+        }
+
+        $xml = @"
+<Config>
+    <Mode>$Mode</Mode>
+    <ApiBaseUrl>$ApiBaseUrl</ApiBaseUrl>
+    <EnrollmentPortalBaseUrl>$EnrollmentPortalBaseUrl</EnrollmentPortalBaseUrl>
+</Config>
+"@
+    }
+    else {
+        throw "Unsupported mode '$Mode'. Allowed values: SqlDirect, Api."
+    }
 
     Set-Content -Path $DestinationPath -Value $xml -Encoding UTF8
 }
@@ -289,23 +340,35 @@ if ($Interactive -or -not $configExists) {
     $providerName = $FixedProviderName
     Write-Host "Provider name is fixed to: $providerName"
 
+    $mode = Read-Mode -Default "SqlDirect"
+
     $adapterZipPath = Read-Host "Adapter ZIP path (e.g. C:\packages\freeADFSOtp-v1.0.0-adfs-node-package.zip)"
 
-    $sqlServer = Read-Host "SQL server name (host\\instance or host,port)"
-    $sqlDatabase = Read-Host "SQL database name"; if ([string]::IsNullOrWhiteSpace($sqlDatabase)) { $sqlDatabase = "FreeAdfsOtp" }
-    $useIntegratedSecurity = Read-Bool -Prompt "Use integrated security for SQL" -Default $true
+    $sqlConnectionString = ""
+    $secretMasterKeyBase64 = ""
+    $apiBaseUrl = ""
+    if ($mode -eq "SqlDirect") {
+        $sqlServer = Read-Host "SQL server name (host\\instance or host,port)"
+        $sqlDatabase = Read-Host "SQL database name"; if ([string]::IsNullOrWhiteSpace($sqlDatabase)) { $sqlDatabase = "FreeAdfsOtp" }
+        $useIntegratedSecurity = Read-Bool -Prompt "Use integrated security for SQL" -Default $true
 
-    $sqlUser = ""
-    $sqlPassword = ""
-    if (-not $useIntegratedSecurity) {
-        $sqlUser = Read-Host "SQL user"
-        $sqlPassword = Read-Host "SQL password (stored in plain text in config)"
+        $sqlUser = ""
+        $sqlPassword = ""
+        if (-not $useIntegratedSecurity) {
+            $sqlUser = Read-Host "SQL user"
+            $sqlPassword = Read-Host "SQL password (stored in plain text in config)"
+        }
+
+        $sqlConnectionString = Build-SqlConnectionString -SqlServer $sqlServer -SqlDatabase $sqlDatabase -UseIntegratedSecurity $useIntegratedSecurity -SqlUser $sqlUser -SqlPassword $sqlPassword
+
+        $secretMasterKeyBase64 = Read-Host "Secret master key base64 (same key as API)"
+        if ([string]::IsNullOrWhiteSpace($secretMasterKeyBase64)) { throw "SecretMasterKeyBase64 is required for SqlDirect mode." }
+    }
+    else {
+        $apiBaseUrl = Read-Host "API base URL (e.g. https://localhost:7043 or http://127.0.0.1:5180)"
+        if ([string]::IsNullOrWhiteSpace($apiBaseUrl)) { throw "ApiBaseUrl is required for Api mode." }
     }
 
-    $sqlConnectionString = Build-SqlConnectionString -SqlServer $sqlServer -SqlDatabase $sqlDatabase -UseIntegratedSecurity $useIntegratedSecurity -SqlUser $sqlUser -SqlPassword $sqlPassword
-
-    $secretMasterKeyBase64 = Read-Host "Secret master key base64 (same key as API)"
-    if ([string]::IsNullOrWhiteSpace($secretMasterKeyBase64)) { throw "SecretMasterKeyBase64 is required." }
     $enrollmentPortalBaseUrl = Read-Host "Enrollment portal URL"; if ([string]::IsNullOrWhiteSpace($enrollmentPortalBaseUrl)) { throw "EnrollmentPortalBaseUrl is required." }
 
     $requireExternalOnly = Read-Bool -Prompt "Apply MFA rule only for external users" -Default $true
@@ -316,9 +379,11 @@ if ($Interactive -or -not $configExists) {
     $config = @{
         ProviderName = $providerName
         TypeName = ""
+        Mode = $mode
         AdapterZipPath = $adapterZipPath
         SqlConnectionString = $sqlConnectionString
         SecretMasterKeyBase64 = $secretMasterKeyBase64
+        ApiBaseUrl = $apiBaseUrl
         EnrollmentPortalBaseUrl = $enrollmentPortalBaseUrl
         RequireExternalOnly = $requireExternalOnly
         ApplyGlobalRule = $applyGlobalRule
@@ -337,9 +402,11 @@ if ($config.ContainsKey("ProviderName") -and -not [string]::IsNullOrWhiteSpace($
 }
 
 $providerName = $FixedProviderName
+$mode = if ($config.ContainsKey("Mode") -and -not [string]::IsNullOrWhiteSpace($config.Mode)) { [string]$config.Mode } else { "SqlDirect" }
 $adapterZipPath = Resolve-RepoPath $config.AdapterZipPath
 $sqlConnectionString = $config.SqlConnectionString
 $secretMasterKeyBase64 = $config.SecretMasterKeyBase64
+$apiBaseUrl = $config.ApiBaseUrl
 $enrollmentPortalBaseUrl = $config.EnrollmentPortalBaseUrl
 $requireExternalOnly = [bool]$config.RequireExternalOnly
 $applyGlobalRule = if ($SkipPolicy) { $false } else { [bool]$config.ApplyGlobalRule }
@@ -348,6 +415,24 @@ $restartAdfsService = [bool]$config.RestartAdfsService
 
 if (-not (Test-Path $adapterZipPath)) {
     throw "Adapter ZIP not found: $adapterZipPath"
+}
+
+if ($mode -eq "SqlDirect") {
+    if ([string]::IsNullOrWhiteSpace($sqlConnectionString)) {
+        throw "SqlConnectionString is required for SqlDirect mode."
+    }
+
+    if ([string]::IsNullOrWhiteSpace($secretMasterKeyBase64)) {
+        throw "SecretMasterKeyBase64 is required for SqlDirect mode."
+    }
+}
+elseif ($mode -eq "Api") {
+    if ([string]::IsNullOrWhiteSpace($apiBaseUrl)) {
+        throw "ApiBaseUrl is required for Api mode."
+    }
+}
+else {
+    throw "Unsupported mode '$mode'. Allowed values: SqlDirect, Api."
 }
 
 $tempRoot = Join-Path $env:TEMP ("freeadfsotp-adfs-" + [Guid]::NewGuid().ToString("N"))
@@ -366,7 +451,7 @@ $typeName = Get-AdapterTypeName -AssemblyPath $adapterDll.FullName
 Write-Host "Auto-detected TypeName: $typeName"
 
 $providerConfigPath = Join-Path (Split-Path -Parent $configFullPath) "provider-config.generated.xml"
-Build-ProviderConfigXml -SqlConnectionString $sqlConnectionString -SecretMasterKeyBase64 $secretMasterKeyBase64 -EnrollmentPortalBaseUrl $enrollmentPortalBaseUrl -DestinationPath $providerConfigPath
+Build-ProviderConfigXml -Mode $mode -SqlConnectionString $sqlConnectionString -SecretMasterKeyBase64 $secretMasterKeyBase64 -ApiBaseUrl $apiBaseUrl -EnrollmentPortalBaseUrl $enrollmentPortalBaseUrl -DestinationPath $providerConfigPath
 Write-Host "Provider XML generated: $providerConfigPath"
 
 Invoke-IfNotDryRun -Description "Install adapter DLL into GAC" -Action {
@@ -419,6 +504,8 @@ if ($restartAdfsService) {
 Invoke-IfNotDryRun -Description "Write ADFS connector install metadata to registry" -Action {
     Set-RegistryInstallMetadata -RegistryPath $AdfsConnectorRegistryPath -Values @{
         ProviderName = $providerName
+        Mode = $mode
+        ApiBaseUrl = $apiBaseUrl
         NodeConfigPath = $configFullPath
         ProviderConfigPath = $providerConfigPath
     }

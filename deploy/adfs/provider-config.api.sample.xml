@@ -1,0 +1,6 @@
+<Config>
+  <Mode>Api</Mode>
+  <!-- Mode hybride recommande: API OTP locale, portail d'enrollement distant dedie. -->
+  <ApiBaseUrl>https://localhost:7043</ApiBaseUrl>
+  <EnrollmentPortalBaseUrl>https://otp-enroll.contoso.local/enroll</EnrollmentPortalBaseUrl>
+</Config>

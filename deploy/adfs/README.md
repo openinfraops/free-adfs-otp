@@ -2,6 +2,72 @@
 
 Ce dossier contient les scripts PowerShell de build/deploiement du provider AD FS.
 
+## Interface graphique (admin)
+
+Un lanceur graphique PowerShell est disponible pour simplifier le deploiement:
+
+- `./deploy/adfs/Deployment-Manager.Gui.ps1`
+
+Lancement (PowerShell admin):
+
+- `powershell -ExecutionPolicy Bypass -File .\deploy\adfs\Deployment-Manager.Gui.ps1`
+
+Fonctions disponibles dans l'UI:
+
+- setup connecteur AD FS (`Setup-AdfsOtpNode.ps1`)
+- update connecteur AD FS (`Update-AdfsConnector.ps1`)
+- setup API locale (`Setup-LocalApiService.ps1`)
+- update API locale (`Update-LocalApiService.ps1`)
+- initialisation SQL (`../sql/Initialize-FreeAdfsOtpSql.ps1`)
+- orchestration globale install/upgrade (`../Setup-FreeAdfsOtp.ps1`)
+- lecture des metadonnees d'installation (`Get-FreeAdfsOtpInstallInfo.ps1`)
+
+Bonnes pratiques:
+
+- lancer l'UI en session admin locale
+- cocher `DryRun` avant toute execution reelle
+- reutiliser les fichiers `ConfigPath` pour standardiser les deploiements entre noeuds
+- utiliser un chemin durable pour les configs, par exemple:
+	- `C:\Program Files\FreeAdfsOtp\config\adfs-node.config.psd1`
+	- `C:\Program Files\FreeAdfsOtp\config\adfs-local-api.config.psd1`
+
+Comportement de la GUI:
+
+- detection de l'etat de deploiement via le registre `HKLM:\SOFTWARE\FreeAdfsOtp`
+- pre-remplissage des `ConfigPath` depuis les metadonnees d'installation si presentes
+- remplacement du mode `Interactive` par des ecrans de saisie GUI qui generent les fichiers `.psd1`
+- onglet SQL dedie pour l'initialisation base (`001_init.sql` + `002_pending_enrollments.sql`)
+- onglet Global dedie pour valider/installer/mettre a jour la stack complete depuis une config unique
+- pour le connecteur AD FS, selection du mode backend `SqlDirect` ou `Api` avec champs adaptes:
+	- `SqlDirect`: `SqlConnectionString` + `SecretMasterKeyBase64`
+	- `Api`: `ApiBaseUrl`
+
+## Installer unique (stack complete)
+
+Un orchestrateur global est disponible:
+
+- `./deploy/Setup-FreeAdfsOtp.ps1`
+
+Exemples:
+
+- validation prerequis:
+	- `./deploy/Setup-FreeAdfsOtp.ps1 -ConfigPath ./deploy/freeadfsotp.installer.sample.psd1 -Action Validate`
+- installation complete (SQL + API locale + connecteur AD FS):
+	- `./deploy/Setup-FreeAdfsOtp.ps1 -ConfigPath ./deploy/freeadfsotp.installer.sample.psd1 -Action InstallAll`
+- mise a jour complete:
+	- `./deploy/Setup-FreeAdfsOtp.ps1 -ConfigPath ./deploy/freeadfsotp.installer.sample.psd1 -Action UpgradeAll`
+
+Options utiles:
+
+- `-DryRun`: simulation sans changement
+- `-SkipPolicy`: n'applique pas la policy MFA globale AD FS lors de l'installation
+- `-SkipSql`: saute l'etape SQL
+- `-IncludeWeb`: inclut les scripts web/admin IIS
+
+Fichier sample fourni:
+
+- `./deploy/freeadfsotp.installer.sample.psd1`
+
 ## Orchestration one-shot
 
 Scripts ajoutes:
